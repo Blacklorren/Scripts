@@ -1,9 +1,9 @@
 using HandballManager.Data;
-using HandballManager.Core; // Added for PlayerPosition
+using HandballManager.Core; 
 using System.Collections.Generic;
-using HandballManager.Simulation.Core.MatchData;
+using HandballManager.Simulation.Engines;
 
-namespace HandballManager.Simulation.Utils // Changed from Interfaces to Utils
+namespace HandballManager.Simulation.Utils 
 {
     public interface IPlayerSetupHandler
     {

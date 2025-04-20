@@ -1,16 +1,17 @@
-// --- START OF FILE HandballManager/Simulation/AI/PlayerAIController.cs ---
 using UnityEngine;
-using HandballManager.Simulation.Core.MatchData; // Updated to reflect new location of MatchData
-using HandballManager.Core;
+
 using HandballManager.Gameplay;
 using HandballManager.Data;
 using HandballManager.Simulation.AI.Decision; // Updated from DecisionMakers to Decision
+using static HandballManager.Simulation.AI.Decision.DefaultOffensiveDecisionMaker; // For ScreenDecisionData/ScreenUseData
 using HandballManager.Simulation.AI.Evaluation; // Updated from Evaluators to Evaluation
 using HandballManager.Simulation.AI.Positioning;  // Correct
 using HandballManager.Simulation.Physics;         // Correct
-using HandballManager.Simulation.Core;            // Add for MatchSimulator
 using System;
 using System.Linq;
+using HandballManager.Simulation.Engines;
+using HandballManager.Core;
+using HandballManager.Simulation.Utils;
 
 namespace HandballManager.Simulation.AI
 {
@@ -59,6 +60,7 @@ namespace HandballManager.Simulation.AI
         private readonly IPersonalityEvaluator _personalityEvaluator;
         private readonly IGameStateEvaluator _gameStateEvaluator;
         private readonly IBallPhysicsCalculator _ballPhysics;
+        private readonly IOffensiveDecisionMaker _offensiveDecisionMaker;
         #endregion
 
         #region Constructor
@@ -72,7 +74,8 @@ namespace HandballManager.Simulation.AI
             ITacticalEvaluator tacticalEvaluator,
             IPersonalityEvaluator personalityEvaluator,
             IGameStateEvaluator gameStateEvaluator,
-            IBallPhysicsCalculator ballPhysics)
+            IBallPhysicsCalculator ballPhysics,
+            IOffensiveDecisionMaker offensiveDecisionMaker)
         {
             // Null checks for all dependencies ensure they are provided
             _tacticPositioner = tacticPositioner ?? throw new ArgumentNullException(nameof(tacticPositioner));
@@ -85,6 +88,7 @@ namespace HandballManager.Simulation.AI
             _personalityEvaluator = personalityEvaluator ?? throw new ArgumentNullException(nameof(personalityEvaluator));
             _gameStateEvaluator = gameStateEvaluator ?? throw new ArgumentNullException(nameof(gameStateEvaluator));
             _ballPhysics = ballPhysics ?? throw new ArgumentNullException(nameof(ballPhysics));
+            _offensiveDecisionMaker = offensiveDecisionMaker ?? throw new ArgumentNullException(nameof(offensiveDecisionMaker));
         }
         #endregion
 
@@ -94,6 +98,9 @@ namespace HandballManager.Simulation.AI
         /// </summary>
         /// <param name="state">The current match state.</param>
         /// <param name="timeStep">The time step for the simulation update in seconds.</param>
+        // --- LOD AI Update Scheduler ---
+        private AIUpdateScheduler _aiUpdateScheduler = new AIUpdateScheduler();
+
         public void UpdatePlayerDecisions(MatchState state, float timeStep)
         {
             if (state == null)
@@ -102,27 +109,71 @@ namespace HandballManager.Simulation.AI
                 return;
             }
 
-            // Using ToList() creates a copy, ensuring safety if the underlying PlayersOnCourt
-            // collection is modified during iteration (e.g., player suspension).
-            // This is a potential performance optimization point if profiling shows it's a bottleneck
-            // for very large numbers of players, but safety is preferred for standard team sizes.
+            float currentTime = Time.time;
+
             foreach (var player in state.PlayersOnCourt.ToList())
             {
-                // Skip if player somehow became null in the list copy (highly unlikely)
                 if (player == null) continue;
                 try
                 {
-                    // Determine the correct tactic for the player's team
+                    // LOD: Only update if scheduler allows
+                    if (!_aiUpdateScheduler.ShouldUpdatePlayer(player, state, currentTime))
+                        continue;
+
                     Tactic tactic = (player.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
 
-                    // Decide action, handling potential null tactic internally
-                    DecidePlayerAction(player, state, tactic);
+                    if (player.HasBall)
+                    {
+                        DecidePlayerAction(player, state, tactic); // Calls DecideOffensiveAction internally
+                    }
+                    else
+                    {
+                        DecideOffBallAction(player, state, tactic);
+                    }
+
+                    // Update LookDirection to face ball or nearest opponent
+            SimulationUtils.UpdateLookDirectionToBallOrOpponent(player, state);
+
+            // Schedule next update for this player
+            _aiUpdateScheduler.ScheduleNextUpdate(player, state, currentTime);
                 }
                 catch (Exception ex)
                 {
                     Debug.LogError($"[PlayerAIController] Error updating player {player?.GetPlayerId()}: {ex.Message}");
                 }
             }
+        }
+
+        /// <summary>
+        /// Decides the best off-ball action (including setting screens) for a player without the ball.
+        /// </summary>
+        private void DecideOffBallAction(SimPlayer player, MatchState state, Tactic tactic)
+        {
+            if (player?.BaseData == null || state == null || tactic == null) return;
+            if (player.HasBall) return; // Defensive: Only off-ball
+
+            // Evaluate screen opportunity
+            var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
+            var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
+            if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
+            {
+                // Use new ScreenDecisionData for screen positioning
+                if (screenOpportunity.Data is ScreenDecisionData screenData)
+                {
+                    player.TargetPlayer = screenData.User;
+                    player.TargetPosition = screenData.ScreenSpot;
+                }
+                else
+                {
+                    player.TargetPlayer = screenOpportunity.Data as SimPlayer;
+                }
+                player.PlannedAction = PlayerAction.SettingScreen;
+                SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state);
+                return;
+            }
+
+            // Default: move to tactical position
+            SetPlayerToMoveToTacticalPosition(player, state, tactic);
         }
 
         /// <summary>
@@ -134,7 +185,7 @@ namespace HandballManager.Simulation.AI
         /// <returns>The action the player should take.</returns>
         public PlayerAction DeterminePlayerAction(MatchState state, PlayerData player)
         {
-            // Validation des paramètres
+            // Validation des paramÃ¨tres
             if (state == null || player == null)
             {
                 Debug.LogWarning("[PlayerAIController] DeterminePlayerAction called with null state or player.");
@@ -145,7 +196,7 @@ namespace HandballManager.Simulation.AI
             SimPlayer simPlayer = state.PlayersOnCourt.FirstOrDefault(p => p.GetPlayerId() == player.PlayerID);
             if (simPlayer == null)
             {
-                // Essayer de trouver le joueur dans AllPlayers si pas trouvé sur le terrain
+                // Essayer de trouver le joueur dans AllPlayers si pas trouvÃ© sur le terrain
                 if (state.AllPlayers.TryGetValue(player.PlayerID, out simPlayer))
                 {
                     if (!simPlayer.IsOnCourt)
@@ -156,7 +207,7 @@ namespace HandballManager.Simulation.AI
                 }
                 else
                 {
-                    // Joueur non trouvé du tout
+                    // Joueur non trouvÃ© du tout
                     Debug.LogWarning($"[PlayerAIController] Player {player.PlayerID} not found in match state.");
                     return PlayerAction.Idle;
                 }
@@ -205,7 +256,7 @@ namespace HandballManager.Simulation.AI
             bool hasBall = player.HasBall;
 
             // --- Action Decision Branching ---
-            if (player.IsGoalkeeper())
+            if (player.AssignedTacticalRole == PlayerPosition.Goalkeeper)
             {
                 DecideGoalkeeperAction(player, state, tactic);
             }
@@ -238,7 +289,7 @@ namespace HandballManager.Simulation.AI
         private bool ShouldSkipDecision(SimPlayer player, MatchState state)
         {
             // Cannot decide if suspended
-            if (player.IsSuspended()) { player.CurrentAction = PlayerAction.Suspended; player.TargetPosition = player.Position; player.TargetPlayer = null; return true; }
+            if (player.SuspensionTimer > 0) { player.CurrentAction = PlayerAction.Suspended; player.TargetPosition = player.Position; player.TargetPlayer = null; return true; }
 
             // Cannot decide if preparing/executing an action
             if (player.ActionTimer > 0) { return true; }
@@ -281,6 +332,7 @@ namespace HandballManager.Simulation.AI
                 Vector2 ballPos2D = new Vector2(state.Ball.Position.x, state.Ball.Position.z);
                 if (Vector2.Distance(player.Position, ballPos2D) < MatchSimulator.LOOSE_BALL_PICKUP_RADIUS * LOOSE_BALL_REACTION_RANGE_MULTIPLIER)
                 {
+                    player.PlannedAction = PlayerAction.ChasingBall;
                     player.CurrentAction = PlayerAction.ChasingBall;
                     player.TargetPosition = ballPos2D;
                     player.TargetPlayer = null; // Ensure no target player while chasing
@@ -305,6 +357,60 @@ namespace HandballManager.Simulation.AI
             if (!hasBall)
             {
                 SetPlayerToMoveToTacticalPosition(player, state, tactic);
+                return;
+            }
+
+            // --- Evaluate Screen Opportunities First ---
+            var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
+            var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
+            if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
+            {
+                // Use new ScreenDecisionData for screen positioning
+                if (screenOpportunity.Data is ScreenDecisionData screenData)
+                {
+                    player.TargetPlayer = screenData.User;
+                    player.TargetPosition = screenData.ScreenSpot;
+                }
+                else
+                {
+                    player.TargetPlayer = screenOpportunity.Data as SimPlayer;
+                }
+                player.PlannedAction = PlayerAction.SettingScreen;
+                SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state); // No prep time for screen (can adjust)
+                return;
+            }
+
+            var useScreen = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.CanUseScreen(aiContext);
+            if (useScreen != null && useScreen.IsSuccessful && useScreen.Confidence > 0.5f)
+            {
+                // Defensive AI logic here (example: marking, blocking, positioning)
+                Vector2 markingTarget = Vector2.zero; // TODO: Replace with actual marking logic
+                bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.AttemptingBlock;
+                bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
+                var pitchGeometry = (_tacticPositioner as HandballManager.Simulation.AI.Positioning.TacticPositioner)?.Geometry as HandballManager.Simulation.Utils.PitchGeometryProvider;
+if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vector3(markingTarget.x, SimConstants.BALL_RADIUS, markingTarget.y), player.TeamSimId == 0))
+                {
+                    // Reroute around the 6m zone if not about to jump
+                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
+                }
+                // If the path to target crosses the 6m zone and not jumping, reroute
+                if (!willBeInAir && pitchGeometry.WouldCrossGoalArea(player.Position, markingTarget, player.TeamSimId))
+                {
+                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
+                }
+                // Use markingTarget for movement/positioning
+
+                if (useScreen.Data is ScreenUseData useData)
+                {
+                    player.TargetPlayer = useData.Screener;
+                    player.TargetPosition = useData.UseSpot;
+                }
+                else
+                {
+                    player.TargetPlayer = useScreen.Data as SimPlayer;
+                }
+                player.PlannedAction = PlayerAction.UsingScreen;
+                SetPlayerAction(player, PlayerAction.UsingScreen, 0.0f, 0.0f, state);
                 return;
             }
 
@@ -343,6 +449,7 @@ namespace HandballManager.Simulation.AI
             switch (chosenAction)
             {
                 case PlayerAction.PreparingShot:
+                    player.PlannedAction = PlayerAction.PreparingShot;
                     SetPlayerAction(player, PlayerAction.PreparingShot, SHOT_PREP_TIME_BASE, SHOT_PREP_TIME_RANDOM_FACTOR, state);
                     break;
                 case PlayerAction.PreparingPass:
@@ -350,6 +457,7 @@ namespace HandballManager.Simulation.AI
                     if (passTarget != null)
                     {
                         player.TargetPlayer = passTarget;
+                        player.PlannedAction = PlayerAction.PreparingPass;
                         SetPlayerAction(player, PlayerAction.PreparingPass, PASS_PREP_TIME_BASE, PASS_PREP_TIME_RANDOM_FACTOR, state);
                     }
                     else
@@ -359,11 +467,13 @@ namespace HandballManager.Simulation.AI
                     }
                     break;
                 case PlayerAction.Dribbling: // Treat Dribbling decision as MovingWithBall state for movement sim
+                     player.PlannedAction = PlayerAction.Dribbling;
                      player.CurrentAction = PlayerAction.MovingWithBall;
                      SetPlayerToMoveToTacticalPosition(player, state, tactic);
                     break;
                 case PlayerAction.MovingWithBall: // Default action
                 default:
+                     player.PlannedAction = PlayerAction.MovingWithBall;
                      player.CurrentAction = PlayerAction.MovingWithBall;
                      SetPlayerToMoveToTacticalPosition(player, state, tactic);
                     break;
@@ -390,11 +500,13 @@ namespace HandballManager.Simulation.AI
             if (defensiveChoice.Action == PlayerAction.AttemptingTackle)
             {
                 // Use SetPlayerAction to handle timer and state correctly
+                player.PlannedAction = PlayerAction.AttemptingTackle;
                 SetPlayerAction(player, PlayerAction.AttemptingTackle, TACKLE_PREP_TIME, 0f, state);
             }
             else
             {
                 // For non-timed actions (Mark, Block, Move), just set the state directly
+                player.PlannedAction = defensiveChoice.Action;
                 player.CurrentAction = defensiveChoice.Action;
                 // Ensure timer is clear for non-preparatory actions
                  if(player.ActionTimer > 0) player.ActionTimer = 0f;
@@ -421,6 +533,7 @@ namespace HandballManager.Simulation.AI
                 if (bestPass?.Player != null && bestPass.Score > passThreshold) // Check Player is not null too
                 {
                     gk.TargetPlayer = bestPass.Player;
+                    gk.PlannedAction = PlayerAction.PreparingPass;
                     SetPlayerAction(gk, PlayerAction.PreparingPass, GK_PASS_PREP_TIME_BASE, GK_PASS_PREP_TIME_RANDOM_FACTOR, state);
                 }
                 else
@@ -438,6 +551,7 @@ namespace HandballManager.Simulation.AI
             {
                 Vector3 predictedImpact = _ballPhysics.EstimateBallGoalLineImpact3D(state.Ball, gk.TeamSimId);
                 gk.TargetPosition = _gkPositioner.GetGoalkeeperSavePosition(gk, state, predictedImpact);
+                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
                 gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
                 gk.TargetPlayer = null;
                 return;
@@ -447,6 +561,7 @@ namespace HandballManager.Simulation.AI
             if (!isOwnTeamPossession)
             {
                 gk.TargetPosition = _gkPositioner.GetGoalkeeperDefensivePosition(gk, state);
+                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
                 gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
                 gk.TargetPlayer = null;
                 return;
@@ -456,6 +571,7 @@ namespace HandballManager.Simulation.AI
             gk.TargetPosition = _gkPositioner.GetGoalkeeperAttackingSupportPosition(gk, state);
             if (Vector2.Distance(gk.Position, gk.TargetPosition) > DIST_TO_TARGET_MOVE_TRIGGER_THRESHOLD)
             {
+                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
                 gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
             }
             else if (gk.CurrentAction == PlayerAction.GoalkeeperPositioning) // Arrived
@@ -479,13 +595,14 @@ namespace HandballManager.Simulation.AI
                                       (IsMovementAction(player.CurrentAction) && Vector2.Distance(player.Position, player.TargetPosition) < DIST_TO_TARGET_IDLE_THRESHOLD);
 
             // Also reposition if marking state is invalid
-            if (player.CurrentAction == PlayerAction.MarkingPlayer && (player.TargetPlayer == null || !player.TargetPlayer.IsOnCourt || player.TargetPlayer.IsSuspended()))
+            if (player.CurrentAction == PlayerAction.MarkingPlayer && (player.TargetPlayer == null || !player.TargetPlayer.IsOnCourt || player.TargetPlayer.SuspensionTimer > 0))
             {
                 needsRepositioning = true;
             }
 
             if (needsRepositioning)
             {
+                player.PlannedAction = PlayerAction.MovingToPosition;
                 SetPlayerToMoveToTacticalPosition(player, state, tactic);
             }
         }
@@ -500,7 +617,7 @@ namespace HandballManager.Simulation.AI
             if (player?.BaseData == null || state == null || _tacticPositioner == null || tactic == null) return;
 
             // Goalkeepers positioning is handled entirely within DecideGoalkeeperAction
-            if (player.IsGoalkeeper()) return;
+            if (player.AssignedTacticalRole == PlayerPosition.Goalkeeper) return;
 
             Vector2 tacticalPos = _tacticPositioner.GetPlayerTargetPosition(state, player);
 
@@ -599,7 +716,7 @@ namespace HandballManager.Simulation.AI
         /// <param name="player">The player whose state needs resetting.</param>
         private void ResetPlayerStateOnError(SimPlayer player)
         {
-            if (player != null && !player.IsSuspended())
+            if (player != null && player.SuspensionTimer <= 0)
             {
                 player.CurrentAction = PlayerAction.Idle;
                 player.ActionTimer = 0f;
@@ -620,7 +737,7 @@ namespace HandballManager.Simulation.AI
         /// <returns>The target position vector for the player.</returns>
         public Vector2 CalculatePlayerPosition(MatchState state, PlayerData player)
         {
-            // Validation des paramètres
+            // Validation des paramÃ¨tres
             if (state == null || player == null)
             {
                 Debug.LogWarning("[PlayerAIController] CalculatePlayerPosition called with null state or player.");
@@ -635,13 +752,13 @@ namespace HandballManager.Simulation.AI
                 return Vector2.zero;
             }
 
-            // Obtenir la tactique appropriée
+            // Obtenir la tactique appropriÃ©e
             Tactic tactic = (simPlayer.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
 
-            // Utiliser le positionneur tactique pour déterminer la position optimale
-            if (simPlayer.IsGoalkeeper())
+            // Utiliser le positionneur tactique pour dÃ©terminer la position optimale
+            if (simPlayer.AssignedTacticalRole == PlayerPosition.Goalkeeper)
             {
-                // Position spécifique pour le gardien de but
+                // Position spÃ©cifique pour le gardien de but
                 if (simPlayer.TeamSimId == state.PossessionTeamId)
                 {
                     // En attaque
@@ -649,13 +766,13 @@ namespace HandballManager.Simulation.AI
                 }
                 else
                 {
-                    // En défense
+                    // En dÃ©fense
                     return _gkPositioner.GetGoalkeeperDefensivePosition(simPlayer, state);
                 }
             }
             else
             {
-                // Position pour les joueurs de champ basée sur la tactique
+                // Position pour les joueurs de champ basÃ©e sur la tactique
                 return _tacticPositioner.GetPlayerTargetPosition(state, simPlayer);
             }
         }
@@ -669,7 +786,7 @@ namespace HandballManager.Simulation.AI
         /// <returns>The best player to receive the pass, or null if no good option exists.</returns>
         public PlayerData FindBestPassTarget(MatchState state, PlayerData passer)
         {
-            // Validation des paramètres
+            // Validation des paramÃ¨tres
             if (state == null || passer == null)
             {
                 Debug.LogWarning("[PlayerAIController] FindBestPassTarget called with null state or passer.");
@@ -684,17 +801,22 @@ namespace HandballManager.Simulation.AI
                 return null;
             }
 
-            // Obtenir la tactique appropriée
+            // Obtenir la tactique appropriÃ©e
             Tactic tactic = (simPasser.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
 
-            // Utiliser le décideur de passes pour évaluer les options
+            // Utiliser le dÃ©cideur de passes pour Ã©valuer les options
             PassOption bestPass = _passDecisionMaker.GetBestPassOption(simPasser, state, tactic);
 
             // Retourner le PlayerData du meilleur receveur, ou null si aucune bonne option
             return bestPass?.Player?.BaseData;
         }
         #endregion
+        /// <summary>
+        /// Calculates a rerouted target position that avoids the 6m goal area if the direct path crosses it.
+        /// Checks if the segment from 'from' to 'to' crosses the 6m goal area for the given team.
+        /// </summary>
 
     } // End Class PlayerAIController
+    
+
 } // End Namespace
-// --- END OF FILE HandballManager/Simulation/AI/PlayerAIController.cs ---

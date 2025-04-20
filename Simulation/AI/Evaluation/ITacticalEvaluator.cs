@@ -1,7 +1,7 @@
 // --- START OF FILE HandballManager/Simulation/AI/Evaluation/ITacticalEvaluator.cs ---
 using HandballManager.Gameplay; // For Tactic, Enums
-using HandballManager.Simulation.Core.MatchData; // Updated to reflect new location of MatchData
-using HandballManager.Core; // For PlayerAction enum
+using HandballManager.Core;
+using HandballManager.Simulation.Engines; // For PlayerAction enum
 
 namespace HandballManager.Simulation.AI.Evaluation // Updated from Evaluators to Evaluation
 {

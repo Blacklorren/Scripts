@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace HandballManager.Simulation.Utils // Changed from Common to Utils
+namespace HandballManager.Simulation.Utils 
 {
     public interface IGeometryProvider
     {

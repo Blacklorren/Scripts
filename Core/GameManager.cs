@@ -1,7 +1,6 @@
 using UnityEngine;
 using System;
 using System.Collections.Generic;
-using System.IO; // Required for File I/O
 using System.Linq; // Required for Linq operations
 using HandballManager.Data;          // Core data structures
 using HandballManager.Simulation;    // Simulation engines
@@ -10,11 +9,9 @@ using HandballManager.Gameplay;    // Gameplay systems (Tactic, Contract, Transf
 using HandballManager.Management;    // League, Schedule, Finance managers
 using HandballManager.Core.MatchData;
 using HandballManager.Simulation.Engines;
-using HandballManager.Simulation.Core; // For MatchInfo struct (adjust namespace if different)
-using HandballManager.Simulation.Core.Interfaces;
 using System.Threading;
-using HandballManager.Simulation.Core.Exceptions;
 using HandballManager.Installers;
+using HandballManager.Simulation.Events;
 
 // Ensure required namespaces exist, even if classes are basic placeholders
 namespace HandballManager.Management { public class FinanceManager { public void ProcessWeeklyPayments(List<TeamData> allTeams) { /* TODO */ } public void ProcessMonthly(List<TeamData> allTeams) { /* TODO */ } } }
@@ -25,7 +22,7 @@ namespace HandballManager.Management { public class FinanceManager { public void
 
 namespace HandballManager.Core
 {
-        // Basic placeholder LeagueData
+    // Basic placeholder LeagueData
     [Serializable]
     public class LeagueData { public int LeagueID; public string Name; /* Add standings, teams list etc. */ }
     // Basic placeholder MatchInfo for schedule (ensure namespace matches if defined elsewhere)
@@ -106,7 +103,7 @@ namespace HandballManager.Core
         public UIManager UIManagerRef { get; private set; } // Keep direct reference for UI updates
         
         // These properties will be removed after full migration to DI
-        private MatchEngine _matchEngine => _serviceContainer.Get<Simulation.Core.Interfaces.IMatchEngine>() as MatchEngine;
+        private MatchEngine _matchEngine => _serviceContainer.Get<IMatchEngine>() as MatchEngine;
         private TrainingSimulator _trainingSimulator => _serviceContainer.Get<TrainingSimulator>();
         private MoraleSimulator _moraleSimulator => _serviceContainer.Get<MoraleSimulator>();
         private PlayerDevelopment _playerDevelopment => _serviceContainer.Get<PlayerDevelopment>();
@@ -223,7 +220,7 @@ public LeagueManager LeagueManager => _leagueManager;
             Debug.Log($"Game State Changing: {previousState} -> {newState}");
             
             // Publish state change event before updating state
-            _serviceContainer.Get<IEventBus>().Publish(new Simulation.Core.Events.GameStateChangedEvent {
+            _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent {
                 OldState = CurrentState,
                 NewState = newState
             });
@@ -434,7 +431,7 @@ public LeagueManager LeagueManager => _leagueManager;
                     Debug.Log($"Game Loaded Successfully. Date: {TimeManager.CurrentDate.ToShortDateString()}, State: {CurrentState}");
 
                     // Publish load completed event
-                    _serviceContainer.Get<IEventBus>().Publish(new Simulation.Core.Events.GameStateChangedEvent
+                    _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
                     {
                         OldState = GameState.Loading,
                         NewState = CurrentState
@@ -497,7 +494,7 @@ public LeagueManager LeagueManager => _leagueManager;
                  UIManagerRef?.DisplayPopup("Game Saved!");
 
                 // Publish save completed event
-                _serviceContainer.Get<IEventBus>().Publish(new Simulation.Core.Events.GameStateChangedEvent
+                _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
                 {
                     OldState = GameState.Loading,
                     NewState = CurrentState

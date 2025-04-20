@@ -1,7 +1,7 @@
-using HandballManager.Simulation.Core;
 using HandballManager.Data;
 using HandballManager.Gameplay;
-using HandballManager.Simulation.Core.MatchData;
+using HandballManager.Simulation.AI.Positioning;
+using HandballManager.Simulation.Engines;
 
 namespace HandballManager.Simulation.AI.Decision
 {
@@ -59,6 +59,10 @@ namespace HandballManager.Simulation.AI.Decision
     /// </summary>
     public class PlayerAIContext
     {
+        /// <summary>
+        /// Gets or sets the tactic positioner for tactical/screening decisions.
+        /// </summary>
+        public ITacticPositioner TacticPositioner { get; set; }
         /// <summary>
         /// Gets or sets the current match state.
         /// </summary>

@@ -1,10 +1,5 @@
-// --- START OF REVISED FILE PassCalculator.cs ---
-
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Core.Constants; // For SimConstants, ActionResolverConstants
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core.Utils;
-using HandballManager.Data;
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Utils;
 using UnityEngine;
 
 namespace HandballManager.Simulation.Events.Calculators
@@ -85,6 +80,38 @@ namespace HandballManager.Simulation.Events.Calculators
             }
 
             Vector3 normalizedDirection = directionToTarget3D.normalized; // Normalize *once* after the check
+
+            // --- Pre-pass Interception Integration ---
+            // Check for possible pre-pass interceptions
+            var interceptionCalculator = new InterceptionCalculator(); // Or get from dependency injection
+            var possibleInterceptors = state.GetPotentialInterceptors(passer, normalizedDirection, distanceToTarget);
+
+            foreach (var defender in possibleInterceptors)
+            {
+                // Calculate pre-pass interception chance
+                float interceptionChance = interceptionCalculator.CalculatePrePassInterceptionChance(defender, passer, target, state);
+
+                // Check if interception happens
+                if (state.RandomGenerator.NextDouble() < interceptionChance)
+                {
+                    // Defender reads the pass and intercepts immediately
+                    state.Ball.MakeLoose(passerPos3D, Vector3.zero, defender.TeamSimId, defender);
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                    Debug.Log($"[PrePassInterception] Defender {defender.BaseData?.FullName} intercepted pass from {passer.BaseData?.FullName} to {target.BaseData?.FullName}.");
+#endif
+                    // TODO: Visual feedback cue for interception (e.g., highlight defender, show animation)
+
+                    return new ActionResult
+                    {
+                        Outcome = ActionResultOutcome.Turnover,
+                        PrimaryPlayer = passer,
+                        SecondaryPlayer = defender,
+                        Reason = "Pass Read And Intercepted",
+                        ImpactPosition = CoordinateUtils.To2DGround(passerPos3D)
+                    };
+                }
+            }
 
             // --- Calculate Accuracy ---
             float accuracyChance = CalculatePassAccuracy(passer, target, state, distanceToTarget); // Pass pre-calculated distance
@@ -237,12 +264,19 @@ namespace HandballManager.Simulation.Events.Calculators
             // Apply pressure penalty
             accuracyChance -= pressurePenalty;
 
-            // --- Factor 4: Fatigue (Optional Example) ---
-            // if (ActionResolverConstants.PASS_FATIGUE_FACTOR > 0)
-            // {
-            //     float fatiguePenalty = passer.CurrentFatigue * ActionResolverConstants.PASS_FATIGUE_FACTOR; // Assuming CurrentFatigue is 0-1
-            //     accuracyChance -= fatiguePenalty;
-            // }
+            // --- Factor 4: Fatigue ---
+            if (ActionResolverConstants.PASS_FATIGUE_FACTOR > 0)
+            {
+                float fatiguePenalty = passer.CurrentFatigue * ActionResolverConstants.PASS_FATIGUE_FACTOR;
+                accuracyChance -= fatiguePenalty;
+                #if UNITY_EDITOR || DEVELOPMENT_BUILD
+                Debug.Log($"[Fatigue] Player {passer.BaseData?.FullName} fatigue: {passer.CurrentFatigue:F2}, penalty: {fatiguePenalty:F2}");
+                #endif
+            }
+
+            // --- Factor 5: Target Openness ---
+            float targetOpenness = ActionCalculatorUtils.CalculatePlayerOpenness(target, state);
+            accuracyChance *= Mathf.Lerp(ActionResolverConstants.OPENNESS_MIN_FACTOR, 1.0f, targetOpenness);
 
             // --- Final Step: Clamp Result ---
             // Ensure the final accuracy chance is within the valid probability range [0, 1]

@@ -1,21 +1,34 @@
 using UnityEngine;
-using HandballManager.Simulation.Core; // Added for SimConstants
 using System;
 using HandballManager.Simulation.Utils;
-using HandballManager.Simulation.Core.MatchData;
 using System.Linq;
 using HandballManager.Core;
+using HandballManager.Simulation.Events;
+using HandballManager.Data;
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.AI.Positioning;
+using HandballManager.Simulation.Events.Interfaces;
+using System.Collections.Generic;
 
 namespace HandballManager.Simulation.Physics
 {
-    public class MovementSimulator : IMovementSimulator
-
+    public partial class MovementSimulator : IMovementSimulator
     {
-        private readonly IGeometryProvider _geometry;
+        private readonly ITacticPositioner _tacticPositioner;
+        // --- Spatial Partitioning Fields ---
+        private SpatialGrid _spatialGrid;
+        private float _spatialGridCellSize = -1f;
+        private float _spatialGridWidth = -1f;
+        private float _spatialGridHeight = -1f;
 
-        public MovementSimulator(IGeometryProvider geometry)
+        private readonly IGeometryProvider _geometry;
+        private readonly IMatchEventHandler _eventHandler;
+
+        public MovementSimulator(IGeometryProvider geometry, IMatchEventHandler eventHandler, ITacticPositioner tacticPositioner)
         {
             _geometry = geometry ?? throw new ArgumentNullException(nameof(geometry));
+            _eventHandler = eventHandler ?? throw new ArgumentNullException(nameof(eventHandler));
+            _tacticPositioner = tacticPositioner ?? throw new ArgumentNullException(nameof(tacticPositioner));
         }
 
         // Movement and Physics Constants
@@ -51,8 +64,6 @@ namespace HandballManager.Simulation.Physics
         private const float STAMINA_RECOVERY_RATE = 0.003f;
         private const float NATURAL_FITNESS_RECOVERY_MOD = 0.2f; // +/- 20% effect on recovery rate based on 0-100 NF (0 = 0.8x, 100 = 1.2x)
         private const float STAMINA_ATTRIBUTE_DRAIN_MOD = 0.3f; // +/- 30% effect on drain rate based on 0-100 Stamina (0=1.3x, 100=0.7x)
-        private const float STAMINA_LOW_THRESHOLD = SimConstants.PLAYER_STAMINA_LOW_THRESHOLD; // Use constant
-        private const float STAMINA_MIN_SPEED_FACTOR = SimConstants.PLAYER_STAMINA_MIN_SPEED_FACTOR; // Use constant
         private const float SPRINT_MIN_EFFORT_THRESHOLD = 0.85f; // % of BASE max speed considered sprinting
         private const float SIGNIFICANT_MOVEMENT_EFFORT_THRESHOLD = 0.2f; // % of BASE max speed considered 'moving' for stamina drain
 
@@ -63,8 +74,7 @@ namespace HandballManager.Simulation.Physics
         private const float NON_SPRINT_SPEED_CAP_FACTOR = 0.85f; // % cap on effective speed when not sprinting
         private const float ARRIVAL_SLOWDOWN_RADIUS = 1.5f;
         private const float ARRIVAL_SLOWDOWN_MIN_DIST = 0.05f; // Min distance for slowdown logic to apply
-        private const float ARRIVAL_DAMPING_FACTOR = 0.5f; // Velocity multiplier when arriving at target
-
+        
         /// <summary>
         /// Main update entry point called by MatchSimulator. Updates ball and player movement, handles collisions.
         /// </summary>
@@ -78,7 +88,7 @@ namespace HandballManager.Simulation.Physics
 
             UpdateBallMovement(state, deltaTime);
             UpdatePlayersMovement(state, deltaTime);
-            HandleCollisionsAndBoundaries(state, deltaTime); // Handles player-player, spacing, and boundary clamping
+            HandleCollisionsAndBoundaries(state); // Handles player-player, spacing, and boundary clamping
         }
 
         /// <summary>
@@ -184,7 +194,7 @@ namespace HandballManager.Simulation.Physics
                 Vector3 reflectedVelocity = incomingVelocity - 2 * vDotN * Vector3.up;
                 reflectedVelocity *= SimConstants.COEFFICIENT_OF_RESTITUTION;
 
-                Vector3 horizontalVelocity = new Vector3(reflectedVelocity.x, 0, reflectedVelocity.z);
+                var horizontalVelocity = new Vector3(reflectedVelocity.x, 0, reflectedVelocity.z);
                 horizontalVelocity *= (1f - SimConstants.FRICTION_COEFFICIENT_SLIDING);
 
                 ball.Velocity = new Vector3(horizontalVelocity.x, reflectedVelocity.y, horizontalVelocity.z);
@@ -195,7 +205,7 @@ namespace HandballManager.Simulation.Physics
                     if (horizontalSpeed > SimConstants.ROLLING_TRANSITION_VEL_XZ_THRESHOLD)
                     {
                         ball.StartRolling(); // Start rolling
-                        ball.Velocity = new Vector3(ball.Velocity.x, 0, ball.Velocity.z);
+                        ball.Velocity = new(ball.Velocity.x, 0, ball.Velocity.z);
                     }
                     else
                     {
@@ -207,7 +217,7 @@ namespace HandballManager.Simulation.Physics
 
         private void SimulateBallRolling(SimBall ball, float deltaTime)
         {
-            Vector3 horizontalVelocity = new Vector3(ball.Velocity.x, 0, ball.Velocity.z);
+            Vector3 horizontalVelocity = new(ball.Velocity.x, 0, ball.Velocity.z);
             float horizontalSpeed = horizontalVelocity.magnitude;
 
             if (horizontalSpeed > SimConstants.FLOAT_EPSILON)
@@ -234,24 +244,183 @@ namespace HandballManager.Simulation.Physics
         }
 
         /// <summary>
+        /// Handles logic when a player exceeds the allowed number of steps (step violation).
+        /// This will log the violation, notify the match state, and trigger a turnover or foul as appropriate.
+        /// </summary>
+        /// <param name="player">The player who committed the step violation.</param>
+        private void TriggerStepViolation(PlayerData player)
+        {
+            if (player == null) return;
+            
+            // Log the violation
+            Debug.Log($"[MovementSimulator] Step violation detected for player {player.FullName} (ID: {player.PlayerID})");
+
+            // Optionally, mark the player as having violated (could be a flag or stat)
+            player.LastStepViolationTime = Time.time;
+
+            // Notify match state (if accessible)
+            // Example: Add a MatchEvent for the violation
+            var state = player.CurrentMatchState;
+            if (state != null && state.MatchEvents != null)
+            {
+                state.MatchEvents.Add(new MatchEvent(state.MatchTimeSeconds, $"Step violation by {player.FullName}", player.CurrentTeamID ?? -1, player.PlayerID));
+            }
+
+            // Trigger a turnover (if logic is available)
+            // Example: Call a method on the match event handler
+            if (state != null && _eventHandler != null)
+            {
+                _eventHandler.HandleActionResult(new ActionResult {
+                    Outcome = ActionResultOutcome.Turnover,
+                    PrimaryPlayer = state.GetPlayerById(player.PlayerID),
+                    Reason = "Step Violation"
+                }, state);
+            }
+
+            // Optionally, reset the player's step count or take other corrective action
+            player.ResetSteps();
+        }
+
+        /// <summary>
         /// Updates players' movement based on their current actions and targets.
         /// </summary>
+        // Store previous IsDribbling state for each player
+        static readonly Dictionary<int, bool> prevDribblingState = new();
+
         private void UpdatePlayersMovement(MatchState state, float deltaTime)
         {
             if(state.PlayersOnCourt == null) return;
 
+            const float STEP_THRESHOLD = 0.25f; // meters, adjust as needed
             foreach (var player in state.PlayersOnCourt)
             {
-                if (player == null || player.IsSuspended()) continue;
+                if (player == null || player.SuspensionTimer > 0) continue;
 
-                Vector2 targetVelocity = CalculateActionTargetVelocity(player, state, out bool allowSprint, out bool applyArrivalSlowdown);
+                Vector2 previousPosition = player.Position;
+                Vector2 targetVelocity = CalculateActionTargetVelocity(player, out bool allowSprint, out bool applyArrivalSlowdown);
                 ApplyAcceleration(player, targetVelocity, allowSprint, applyArrivalSlowdown, deltaTime);
                 player.Position += player.Velocity * deltaTime;
+
+                // --- Fatigue System: Update fatigue based on movement ---
+                // --- Fatigue System: Update fatigue based on match progression ---
+                float matchProgress = Mathf.Clamp01(state.MatchTimeSeconds / Mathf.Max(1f, state.MatchDurationSeconds));
+                float accumulationMultiplier = Mathf.Lerp(1.0f, 2.0f, matchProgress); // up to 2x at end
+                float recoveryMultiplier = Mathf.Lerp(1.0f, 0.5f, matchProgress); // down to 0.5x at end
+
+                Debug.Log($"[FatigueMult] Time: {state.MatchTimeSeconds:F1}/{state.MatchDurationSeconds:F1} ({matchProgress:P1}) | Accum: {accumulationMultiplier:F2}, Recov: {recoveryMultiplier:F2}");
+                player.UpdateFatigue(deltaTime, player.HasBall);
+
+                // --- Goal Area Violation Enforcement (Handball 6m Zone Rules) ---
+                bool inGoalArea = IsInGoalArea(player.Position, player.TeamSimId);
+                bool inGoalAreaBuffer = IsInGoalAreaBuffer(player.Position, player.TeamSimId);
+                bool isGoalkeeper = IsGoalkeeper(player);
+                int defendingTeamId = (player.Position.x < (_geometry.PitchLength / 2f)) ? 0 : 1;
+                bool isAttacking = player.TeamSimId != defendingTeamId;
+                bool isDefending = !isAttacking;
+
+                // Proactive avoidance: steer clear of the 6m zone (with buffer)
+                if (!isGoalkeeper && inGoalAreaBuffer && !IsAllowedZoneEntryContext(player, state, isAttacking, isDefending))
+                {
+                    RedirectAroundGoalArea(player, player.TeamSimId);
+                }
+
+                // Allow entry in special contexts, but trigger violation if player ends up in zone after context ends
+                if (inGoalArea && !isGoalkeeper)
+                {
+                    if (isAttacking)
+                    {
+                        // If not in shot/jump context, turnover
+                        if (!IsAllowedZoneEntryContext(player, state, true, false))
+                        {
+                            TriggerTurnover(player, state, "Attacker entered 6m zone");
+                        }
+                    }
+                    else // defending
+                    {
+                        // If not 'pushed' by collision, penalty
+                        if (!IsAllowedZoneEntryContext(player, state, false, true))
+                        {
+                            // Defender entered 6m zone: always penalty throw per updated rules
+                            if (_eventHandler != null && state != null)
+                            {
+                                _eventHandler.HandleActionResult(new ActionResult
+                                {
+                                    Outcome = ActionResultOutcome.FoulCommitted,
+                                    PrimaryPlayer = player,
+                                    FoulSeverity = FoulSeverity.PenaltyThrow,
+                                    Reason = "Defender entered 6m zone"
+                                }, state);
+                            }
+                        }
+                    }
+                }
+
+                // --- Aerial Play Violation: Attacker lands in 6m zone with ball ---
+                // Detect landing event
+                bool wasJumping = player.JumpOrigin != null;
+                bool isJumping = player.CurrentAction == PlayerAction.Jumping;
+                if (isAttacking && wasJumping && !isJumping && player.JumpOriginatedOutsideGoalArea && inGoalArea && player.HasBall)
+                {
+                    // Attacker landed in 6m zone with ball after jump: turnover
+                    TriggerTurnover(player, state, "Attacker landed in 6m zone with ball after jump");
+                }
+
                 ApplyStaminaEffects(player, deltaTime);
+
+                // Step tracking logic
+                if (player.BaseData is HandballManager.Data.PlayerData pdata)
+                {
+                    // --- Jumping Mechanics Update ---
+                    // Track jump state transitions for zone logic
+                    // (wasJumping, isJumping, isLanding already computed above)
+
+                    // Detect jump start
+                    if (!wasJumping && isJumping)
+                    {
+                        player.JumpOrigin = player.Position;
+                        player.JumpOriginatedOutsideGoalArea = !IsInGoalArea(player.Position, player.TeamSimId);
+                    }
+                    // Detect landing or jump end
+                    else if (wasJumping && !isJumping)
+                    {
+                        player.JumpOrigin = null;
+                        player.JumpOriginatedOutsideGoalArea = false;
+                    }
+
+                    pdata.UpdateJump(deltaTime);
+
+                    // Get previous dribbling state
+                    int pid = pdata.PlayerID;
+                    prevDribblingState.TryGetValue(pid, out bool wasDribbling);
+                    if (!wasDribbling && pdata.IsDribbling)
+                    {
+                        pdata.ResetSteps();
+                    }
+
+                    // If player just caught the ball or picked up dribble, reset steps (optional: depends on rules)
+                    // if (wasDribbling && !pdata.IsDribbling && pdata.HasBall) { pdata.ResetSteps(); }
+
+                    // Step counting
+                    if (pdata.HasBall && !pdata.IsDribbling)
+                    {
+                        float distance = Vector2.Distance(player.Position, previousPosition);
+                        if (distance > STEP_THRESHOLD)
+                        {
+                            pdata.IncrementStep();
+                            if (pdata.ExceededStepLimit())
+                            {
+                                TriggerStepViolation(pdata);
+                            }
+                        }
+                    }
+
+                    // Update previous dribbling state
+                    prevDribblingState[pid] = pdata.IsDribbling;
+                }
             }
         }
 
-        private Vector2 CalculateActionTargetVelocity(SimPlayer player, MatchState state, out bool allowSprint, out bool applyArrivalSlowdown)
+        private Vector2 CalculateActionTargetVelocity(SimPlayer player, out bool allowSprint, out bool applyArrivalSlowdown)
         {
             Vector2 targetVelocity = Vector2.zero;
             allowSprint = false;
@@ -274,7 +443,7 @@ namespace HandballManager.Simulation.Physics
                     {
                         targetVelocity = direction.normalized * player.EffectiveSpeed;
                     }
-                    allowSprint = !player.IsGoalkeeper() && player.CurrentAction != PlayerAction.AttemptingBlock;
+                    allowSprint = player.AssignedTacticalRole != PlayerPosition.Goalkeeper && player.CurrentAction != PlayerAction.AttemptingBlock;
                     break;
 
                 case PlayerAction.PreparingPass:
@@ -290,6 +459,33 @@ namespace HandballManager.Simulation.Physics
                     break;
             }
             return targetVelocity;
+        }
+
+        /// <summary>
+        /// Determines the severity of a foul (FreeThrow or PenaltyThrow) based on the context of the foul.
+        /// - PenaltyThrow if the attacker is pushed in the air with significant speed, or if there is head contact.
+        /// - FreeThrow otherwise.
+        /// </summary>
+        /// <param name="attacker">The player being fouled</param>
+        /// <param name="defender">The player committing the foul</param>
+        /// <param name="wasPush">True if the foul was a push (for air check)</param>
+        /// <returns>FoulSeverity.FreeThrow or FoulSeverity.PenaltyThrow</returns>
+        private FoulSeverity DetermineFoulSeverity(SimPlayer attacker, SimPlayer defender, bool wasPush)
+        {
+            // Threshold for "dangerous" speed in the air (tweak as needed)
+            const float airborneSpeedThreshold = 2.5f; // meters/second
+
+            bool isAirborne = attacker.CurrentAction == PlayerAction.Jumping;
+            bool isPushedInAir = isAirborne && wasPush;
+            bool isFastInAir = isAirborne && attacker.Velocity.magnitude > airborneSpeedThreshold;
+            // TODO: Implement head contact detection
+            // bool isHeadContact = ...;
+            // if (isHeadContact) return FoulSeverity.PenaltyThrow;
+
+            if (isPushedInAir && isFastInAir)
+                return FoulSeverity.PenaltyThrow;
+
+            return FoulSeverity.FreeThrow;
         }
 
         private void ApplyAcceleration(SimPlayer player, Vector2 targetVelocity, bool allowSprint, bool applyArrivalSlowdown, float deltaTime)
@@ -320,7 +516,7 @@ namespace HandballManager.Simulation.Physics
             if (applyArrivalSlowdown && distanceToTarget < ARRIVAL_SLOWDOWN_RADIUS && distanceToTarget > ARRIVAL_SLOWDOWN_MIN_DIST)
             {
                 finalTargetSpeed *= Mathf.Sqrt(Mathf.Clamp01(distanceToTarget / ARRIVAL_SLOWDOWN_RADIUS));
-                isSprinting = false;
+                
             }
 
             Vector2 finalTargetVelocity = (finalTargetSpeed > 0.01f) ? targetVelocity.normalized * finalTargetSpeed : Vector2.zero;
@@ -392,7 +588,7 @@ namespace HandballManager.Simulation.Physics
 
             // Delegate to the existing collision handling logic with a minimal time step
             // This allows reuse of the existing collision logic without duplicating code
-            HandleCollisionsAndBoundaries(state, 0.01f);
+            HandleCollisionsAndBoundaries(state);
         }
 
         /// <summary>
@@ -420,37 +616,76 @@ namespace HandballManager.Simulation.Physics
         /// <summary>
         /// Handles collisions and boundaries with proper single implementation
         /// </summary>
-        private void HandleCollisionsAndBoundaries(MatchState state, float deltaTime)
+        private void HandleCollisionsAndBoundaries(MatchState state)
         {
             if (state?.PlayersOnCourt == null) return;
 
+            // --- Reset BallProtectionBonus for all players at the start of the step ---
+            // BallProtectionBonus property removed; shielding handled via PlayerData.GetShieldingEffectiveness()
+
             var players = state.PlayersOnCourt.ToList(); // Convertir IEnumerable en List pour permettre l'indexation
 
-            // Handle player-player collisions and team spacing
+            // --- Spatial Partitioning for Player-Player Collisions and Team Spacing ---
+            float pitchLength = (_geometry?.PitchLength ?? SimConstants.DEFAULT_PITCH_LENGTH);
+            float pitchWidth = (_geometry?.PitchWidth ?? SimConstants.DEFAULT_PITCH_WIDTH);
+            float cellSize = SimConstants.PLAYER_COLLISION_RADIUS * 2.5f;
+            if (_spatialGrid == null || _spatialGridCellSize != cellSize || _spatialGridWidth != pitchLength || _spatialGridHeight != pitchWidth)
+            {
+                _spatialGrid = new SpatialGrid(pitchLength, pitchWidth, cellSize);
+                _spatialGridCellSize = cellSize;
+                _spatialGridWidth = pitchLength;
+                _spatialGridHeight = pitchWidth;
+            }
+            _spatialGrid.Clear();
+            foreach (var p in players)
+                if (p != null) _spatialGrid.Insert(p);
+
+            HashSet<(int, int)> checkedPairs = new();
             for (int i = 0; i < players.Count; i++)
             {
                 var player1 = players[i];
                 if (player1 == null) continue;
-
-                for (int j = i + 1; j < players.Count; j++)
+                var nearbyPlayers = _spatialGrid.GetNearbySimPlayers(player1.Position, SimConstants.PLAYER_COLLISION_RADIUS * 2f);
+                foreach (var player2 in nearbyPlayers)
                 {
-                    var player2 = players[j];
-                    if (player2 == null) continue;
+                    if (player2 == null || player1 == player2) continue;
+                    int id1 = player1.GetPlayerId();
+                    int id2 = player2.GetPlayerId();
+                    if (id1 > id2) continue; // Avoid duplicate checks
+                    var pair = (id1, id2);
+                    if (checkedPairs.Contains(pair)) continue;
+                    checkedPairs.Add(pair);
 
                     Vector2 separation = player1.Position - player2.Position;
                     float distanceSq = separation.sqrMagnitude;
 
                     // Handle collision
-                    if (distanceSq < PLAYER_COLLISION_DIAMETER_SQ && distanceSq > COLLISION_MIN_DIST_SQ_CHECK)
+                    if (distanceSq < SimConstants.PLAYER_COLLISION_DIAMETER_SQ && distanceSq > COLLISION_MIN_DIST_SQ_CHECK)
                     {
                         float distance = Mathf.Sqrt(distanceSq);
                         Vector2 separationDir = separation / distance;
 
-                        float overlap = PLAYER_COLLISION_DIAMETER - distance;
-                        Vector2 responseVector = separationDir * overlap * COLLISION_RESPONSE_FACTOR;
+                        float overlap = SimConstants.PLAYER_COLLISION_DIAMETER - distance;
+                        Vector2 responseVector = COLLISION_RESPONSE_FACTOR * overlap * separationDir;
 
-                        player1.Position += responseVector;
-                        player2.Position -= responseVector;
+                        // --- Shielding Mechanics ---
+                        bool player1Shielding = player1.CurrentAction == PlayerAction.ShieldingBall && player1.HasBall;
+                        bool player2Shielding = player2.CurrentAction == PlayerAction.ShieldingBall && player2.HasBall;
+                        float shieldFactor1 = 0f, shieldFactor2 = 0f;
+                        if (player1Shielding && player1.BaseData != null)
+                            shieldFactor1 = player1.BaseData.GetShieldingEffectiveness();
+                        if (player2Shielding && player2.BaseData != null)
+                            shieldFactor2 = player2.BaseData.GetShieldingEffectiveness();
+
+                        // Reduce displacement effect for shielding player
+                        Vector2 response1 = responseVector;
+                        Vector2 response2 = -responseVector;
+                        if (player1Shielding)
+                            response1 *= (1f - shieldFactor1);
+                        if (player2Shielding)
+                            response2 *= (1f - shieldFactor2);
+                        player1.Position += response1;
+                        player2.Position += response2;
 
                         // Add velocity response (conservation of momentum)
                         Vector2 relativeVelocity = player1.Velocity - player2.Velocity;
@@ -461,10 +696,13 @@ namespace HandballManager.Simulation.Physics
                             // In collision response
                             float p1Mass = 1.0f + ((player1.BaseData?.Strength ?? 50f) / 200f);
                             float p2Mass = 1.0f + ((player2.BaseData?.Strength ?? 50f) / 200f);
-                            float totalMassInv = 1.0f / (p1Mass + p2Mass);
                             float impulse = velAlongNormal / (1 / p1Mass + 1 / p2Mass);
                             Vector2 impulseVector = separationDir * impulse;
-                            
+                            // Reduce impulse for shielding
+                            if (player1Shielding)
+                                impulseVector *= (1f - shieldFactor1);
+                            if (player2Shielding)
+                                impulseVector *= (1f - shieldFactor2);
                             player1.Velocity -= impulseVector / p1Mass;
                             player2.Velocity += impulseVector / p2Mass;
                         }
@@ -516,74 +754,106 @@ namespace HandballManager.Simulation.Physics
         public void EnforceBoundaries(MatchState state)
         {
             if (state == null) return;
-            HandleCollisionsAndBoundaries(state, 0);
+            HandleCollisionsAndBoundaries(state);
         }
 
         public void HandleSpecialMovement(MatchState state, GameSituationType situationType)
         {
             if (state == null) return;
 
-            // Handle different special movement situations
+            // Handle different special movement situations via TacticPositioner
+            // Note: Ensure _tacticPositioner is constructed/injected appropriately
             switch (situationType)
             {
                 case GameSituationType.FreeThrow:
-                    // Apply special positioning for free throw
-                    HandleFreeThrowPositioning(state);
+                    _tacticPositioner.PositionForFreeThrow(state);
                     break;
 
                 case GameSituationType.Penalty:
-                    // Apply special positioning for penalty
-                    HandlePenaltyPositioning(state);
+                    _tacticPositioner.PositionForPenalty(state);
                     break;
 
                 case GameSituationType.KickOff:
-                    // Apply special positioning for kickoff
-                    HandleKickOffPositioning(state);
+                    _tacticPositioner.PositionForKickOff(state);
                     break;
 
                 case GameSituationType.ThrowIn:
-                    // Apply special positioning for throw-in
-                    HandleThrowInPositioning(state);
+                    _tacticPositioner.PositionForThrowIn(state);
                     break;
 
                 case GameSituationType.GoalThrow:
-                    // Apply special positioning for goal throw
-                    HandleGoalThrowPositioning(state);
+                    _tacticPositioner.PositionForGoalThrow(state);
                     break;
 
                     // Add other cases as needed
             }
         }
 
-        // Helper methods (add these to your MovementSimulator class)
-        private void HandleFreeThrowPositioning(MatchState state)
+        // Special situation positioning is now handled by TacticPositioner.
+        // Removed legacy helpers from MovementSimulator.
+
+        // --- Goal Area Violation Helpers (Handball 6m Zone) ---
+        // Only the goalkeeper is allowed in their own 6m zone
+        private bool ShouldAvoidGoalArea(SimPlayer player, MatchState state)
         {
-            // Implementation for free throw positioning
-            // This would ensure defenders are at proper distance, etc.
+            return !IsGoalkeeper(player);
         }
 
-        private void HandlePenaltyPositioning(MatchState state)
+        // Returns true if this player is the goalkeeper
+        private bool IsGoalkeeper(SimPlayer player)
         {
-            // Implementation for penalty positioning
-            // This would position the goalkeeper, shooter, and other players
+            return player.AssignedTacticalRole == PlayerPosition.Goalkeeper;
         }
 
-        private void HandleKickOffPositioning(MatchState state)
+        // Triggers a turnover for the attacking team
+        private void TriggerTurnover(SimPlayer player, MatchState state, string reason)
         {
-            // Implementation for kickoff positioning
-            // This would ensure teams are in their own half, etc.
+            if (_eventHandler != null && state != null)
+            {
+                _eventHandler.HandleActionResult(new ActionResult
+                {
+                    Outcome = ActionResultOutcome.Turnover,
+                    PrimaryPlayer = player,
+                    Reason = reason
+                }, state);
+            }
         }
 
-        private void HandleThrowInPositioning(MatchState state)
+        // Testable: Returns true if position is inside the goal area for a team
+        private bool IsInGoalArea(Vector2 position, int teamId)
         {
-            // Implementation for throw-in positioning
-            // This would position players for a sideline throw-in
+            Vector2 goalCenter = _geometry.GetGoalCenter(teamId == 0 ? 1 : 0); // Opponent's goal area
+            float radius = _geometry.GoalAreaRadius;
+            return Vector2.Distance(position, goalCenter) < radius;
         }
 
-        private void HandleGoalThrowPositioning(MatchState state)
+        // Returns true if position is within the avoidance buffer outside the goal area
+        private bool IsInGoalAreaBuffer(Vector2 position, int teamId)
         {
-            // Implementation for goal throw positioning
-            // This would position players for a goalkeeper's throw
+            Vector2 goalCenter = _geometry.GetGoalCenter(teamId == 0 ? 1 : 0);
+            float buffer = _geometry.GoalAreaRadius + 0.7f; // 0.7m buffer (adjustable)
+            return Vector2.Distance(position, goalCenter) < buffer && !IsInGoalArea(position, teamId);
         }
+
+        // Returns true if the player is allowed to enter the zone in current context
+        // Only allowed if the player is in the air and the jump originated from outside the zone
+        private bool IsAllowedZoneEntryContext(SimPlayer player, MatchState state, bool isAttacking, bool isDefending)
+        {
+            return player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea;
+        }
+
+        // Testable: Redirects player velocity tangentially around the goal area
+        private void RedirectAroundGoalArea(SimPlayer player, int teamId)
+        {
+            Vector2 goalCenter = _geometry.GetGoalCenter(teamId == 0 ? 1 : 0);
+            Vector2 fromGoal = (player.Position - goalCenter).normalized;
+            Vector2 tangent = new Vector2(-fromGoal.y, fromGoal.x);
+            if (Vector2.Dot(tangent, player.Velocity) < 0)
+                tangent = -tangent;
+            player.Velocity = tangent * player.Velocity.magnitude;
+            player.Velocity += fromGoal * player.Velocity.magnitude * 0.2f;
+        }
+
     }
-}
+
+ }

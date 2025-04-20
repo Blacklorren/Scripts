@@ -1,5 +1,6 @@
 using System; // For Serializable, DateTime, Guid
 using System.Collections.Generic;
+using HandballManager.Simulation.Engines;
 using UnityEngine; // Required for Debug.Log potentially
 
 namespace HandballManager.Data
@@ -73,12 +74,12 @@ namespace HandballManager.Data
         /// <summary>
         /// List of key events that occurred during the match (goals, fouls, etc.).
         /// </summary>
-        public List<HandballManager.Simulation.Core.MatchData.MatchEvent> MatchEvents { get; set; } = new List<HandballManager.Simulation.Core.MatchData.MatchEvent>();
+        public List<MatchEvent> MatchEvents { get; set; } = new List<MatchEvent>();
 
         /// <summary>
         /// The final state of the match at the end of simulation.
         /// </summary>
-        public HandballManager.Simulation.Core.MatchData.MatchState FinalMatchState { get; set; }
+        public MatchState FinalMatchState { get; set; }
 
         // Optional: Add more details later if needed
         // public Dictionary<int, PlayerMatchStats> PlayerStats { get; set; } // PlayerID -> Stats for this match
@@ -125,7 +126,7 @@ namespace HandballManager.Data
             try {
                  // Added namespace for clarity if needed
                  MatchDate = HandballManager.Core.GameManager.Instance.TimeManager.CurrentDate;
-            } catch (Exception ex) {
+            } catch (Exception) {
                  // Log warning only if GameManager or TimeManager likely should exist but don't
                  // Avoid spamming logs during isolated testing where GameManager might be absent.
                  // Debug.LogWarning($"Could not get game date for MatchResult, using system time. Error: {ex.Message}");

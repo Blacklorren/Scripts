@@ -1,8 +1,6 @@
-// --- START OF FILE HandballManager/Simulation/Events/Calculators/FoulCalculator.cs ---
 using UnityEngine;
 using System;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core.Constants;
+using HandballManager.Simulation.Engines;
 
 namespace HandballManager.Simulation.Events.Calculators
 {

@@ -2,11 +2,9 @@ using UnityEngine;
 using HandballManager.Core;
 using System;
 using System.Linq;
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Events;
-using HandballManager.Simulation.AI;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core.Utils; // Added for SimConstants
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Events.Interfaces;
+using HandballManager.Simulation.AI.Positioning; // Added for SimConstants
 
 namespace HandballManager.Simulation.Utils // Changed from Services to Utils
 {
@@ -19,8 +17,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
         private readonly IPlayerSetupHandler _playerSetupHandler;
         private readonly IMatchEventHandler _eventHandler;
         private readonly IGeometryProvider _geometry;
-        private readonly TacticPositioner _tacticPositioner; // Needs TacticPositioner
-
+        private readonly TacticPositioner _tacticPositioner; 
         private bool _setupPending = false;
         
         // Constants for boundary checking and positioning

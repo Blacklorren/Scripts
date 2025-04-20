@@ -1,5 +1,5 @@
-using HandballManager.Simulation.AI;
-using HandballManager.Simulation.Events;
+using HandballManager.Simulation.AI.Positioning;
+using HandballManager.Simulation.Events.Interfaces;
 using HandballManager.Simulation.Physics;
 
 namespace HandballManager.Simulation.Engines

@@ -1,7 +1,7 @@
 using HandballManager.Simulation.Physics;
 using HandballManager.Simulation.Utils;
-using HandballManager.Simulation.Events;
 using System;
+using HandballManager.Simulation.Events.Interfaces;
 
 namespace HandballManager.Simulation.Services
 {

@@ -7,11 +7,16 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using HandballManager.Simulation.Utils;
+using HandballManager.Simulation.Factories;
 using HandballManager.Simulation.Events;
-using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler interface
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Events.Interfaces;
+using HandballManager.Simulation.AI.Positioning; // For IPlayerSetupHandler interface
 
-    public class DefaultPlayerSetupHandler : IPlayerSetupHandler
+public class DefaultPlayerSetupHandler : IPlayerSetupHandler
     {
+        private readonly PlayerFactory _playerFactory;
+    
         private readonly IMatchEventHandler _eventHandler;
         private readonly TacticPositioner _tacticPositioner; // Inject TacticPositioner
         private readonly IGeometryProvider _geometry; // Inject Geometry
@@ -19,11 +24,12 @@ using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler inte
         // Constants from original MatchSimulator related to positioning
         private const float DEF_GK_DEPTH = 0.5f;
 
-        public DefaultPlayerSetupHandler(IMatchEventHandler eventHandler, TacticPositioner tacticPositioner, IGeometryProvider geometry)
+        public DefaultPlayerSetupHandler(IMatchEventHandler eventHandler, TacticPositioner tacticPositioner, IGeometryProvider geometry, PlayerFactory playerFactory)
         {
             _eventHandler = eventHandler ?? throw new ArgumentNullException(nameof(eventHandler));
             _tacticPositioner = tacticPositioner ?? throw new ArgumentNullException(nameof(tacticPositioner)); // Store TacticPositioner
             _geometry = geometry ?? throw new ArgumentNullException(nameof(geometry)); // Store Geometry
+            _playerFactory = playerFactory ?? throw new ArgumentNullException(nameof(playerFactory));
         }
 
         public bool PopulateAllPlayers(MatchState state)
@@ -57,7 +63,7 @@ using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler inte
                 }
                 if (!state.AllPlayers.ContainsKey(playerData.PlayerID)) {
                     try {
-                        var simPlayer = new SimPlayer(playerData, teamSimId);
+                        var simPlayer = _playerFactory.CreateSimPlayer(playerData, teamSimId, applyDevelopment: true);
                         state.AllPlayers.Add(playerData.PlayerID, simPlayer);
                     } catch (Exception ex) {
                         Debug.LogError($"[DefaultPlayerSetupHandler] Error creating/adding SimPlayer for {playerData.FullName} (ID:{playerData.PlayerID}): {ex.Message}");
@@ -176,7 +182,7 @@ using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler inte
             if (tactic == null) { Debug.LogError("[DefaultPlayerSetupHandler] Cannot place players: Tactic is null."); return; } // Null tactic check
 
             foreach (var player in players) {
-                if (player == null || !player.IsOnCourt || player.IsSuspended()) continue;
+                if (player == null || !player.IsOnCourt || player.SuspensionTimer > 0) continue;
 
                 player.CurrentAction = PlayerAction.Idle; player.Velocity = Vector2.zero;
                 Vector2 basePos = player.Position;
@@ -192,7 +198,7 @@ using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler inte
                     if (isHomeTeam && basePos.x >= halfLineX) { basePos.x = halfLineX - (1f + ((player.GetPlayerId() % 5) * 0.5f)); }
                     else if (!isHomeTeam && basePos.x <= halfLineX) { basePos.x = halfLineX + (1f + ((player.GetPlayerId() % 5) * 0.5f)); }
 
-                    if (player.IsGoalkeeper()) {
+                    if (player.AssignedTacticalRole == PlayerPosition.Goalkeeper) {
                         Vector3 goalCenter3D = isHomeTeam ? _geometry.HomeGoalCenter3D : _geometry.AwayGoalCenter3D; // Use geometry
                         basePos = new Vector2(goalCenter3D.x + (isHomeTeam ? DEF_GK_DEPTH : -DEF_GK_DEPTH), goalCenter3D.z);
                     }
@@ -206,8 +212,8 @@ using HandballManager.Simulation.Core.MatchData; // For IPlayerSetupHandler inte
             // --- Logic copied from MatchSimulator ---
             if (lineup == null) return null;
             // Check BaseData null safety
-            SimPlayer player = lineup.FirstOrDefault(p=> p != null && p.BaseData?.PrimaryPosition == position && p.IsOnCourt && !p.IsSuspended());
+            SimPlayer player = lineup.FirstOrDefault(p=> p != null && p.BaseData?.PrimaryPosition == position && p.IsOnCourt && p.SuspensionTimer <= 0);
             // Check BaseData null safety
-            return player ?? lineup.FirstOrDefault(p => p != null && p.BaseData?.PrimaryPosition != PlayerPosition.Goalkeeper && p.IsOnCourt && !p.IsSuspended());
+            return player ?? lineup.FirstOrDefault(p => p != null && p.BaseData?.PrimaryPosition != PlayerPosition.Goalkeeper && p.IsOnCourt && p.SuspensionTimer <= 0);
         }
     }

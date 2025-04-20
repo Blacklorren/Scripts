@@ -1,6 +1,5 @@
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Core.Constants; // For SimConstants
-using HandballManager.Simulation.Core.MatchData;
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Utils;
 using UnityEngine;
 
 namespace HandballManager.Simulation.Events.Calculators
@@ -10,11 +9,24 @@ namespace HandballManager.Simulation.Events.Calculators
     /// </summary>
     public class ShotCalculator
     {
+        private readonly BlockCalculator _blockCalculator;
+
+        public ShotCalculator(BlockCalculator blockCalculator)
+        {
+            _blockCalculator = blockCalculator ?? throw new System.ArgumentNullException(nameof(blockCalculator));
+        }
         /// <summary>
         /// Resolves the release of a shot. Sets the ball in flight with calculated inaccuracy and spin.
         /// </summary>
-        public ActionResult ResolveShotAttempt(SimPlayer shooter, MatchState state)
+        public ActionResult ResolveShotAttempt(SimPlayer shooter, MatchState state, HandballManager.Simulation.AI.Evaluation.IGameStateEvaluator evaluator)
         {
+            // Conditional jump logic
+            if (shooter?.BaseData != null && state != null && JumpDecisionUtils.ShouldJumpForShot(shooter, state, evaluator))
+            {
+                if (!shooter.BaseData.IsJumping)
+                    shooter.BaseData.InitiateJump();
+            }
+
             if (shooter?.BaseData is null || state is null)
                 return new ActionResult { Outcome = ActionResultOutcome.Failure, PrimaryPlayer = shooter, Reason = "Null input in ResolveShotAttempt" };
 
@@ -56,14 +68,67 @@ namespace HandballManager.Simulation.Events.Calculators
 
             state.Ball.ReleaseAsShot(shooter, actualDirection3D * speed, angularVelocity);
 
+            // --- Block Logic Integration ---
+            var shotContext = new ShotContext {
+                ShotOrigin = shooterPos3D,
+                ShotDirection = actualDirection3D,
+                ShotSpeed = speed,
+                ShotHeight = shooter.BaseData.Height,
+                ShotAngle = horizontalAngleOffset,
+                ShotDeception = shooter.BaseData.Blocking, // Tied to blocking attribute as per user request
+                ReleaseTime = Time.time // Or use a simulation time if available
+            };
+            var blockResult = _blockCalculator.TryBlockShot(shooter, state, shotContext);
+            if (blockResult.Blocked || blockResult.Partial) {
+                // Enhanced block outcome logic
+                ActionResultOutcome outcome;
+                string reason;
+                SimPlayer possessionPlayer = null;
+                switch (blockResult.OutcomeType) {
+                    case BlockCalculator.BlockOutcomeType.CaughtByBlocker:
+                        outcome = ActionResultOutcome.BlockedAndCaught;
+                        possessionPlayer = blockResult.PossessionPlayer;
+                        reason = "Shot blocked and caught by defender.";
+                        break;
+                    case BlockCalculator.BlockOutcomeType.ToTeammate:
+                        outcome = ActionResultOutcome.BlockedToTeammate;
+                        possessionPlayer = blockResult.PossessionPlayer;
+                        reason = "Shot blocked to defender's teammate.";
+                        break;
+                    case BlockCalculator.BlockOutcomeType.OutOfBounds:
+                        outcome = ActionResultOutcome.BlockedOutOfBounds;
+                        possessionPlayer = null;
+                        reason = "Shot blocked out of bounds.";
+                        break;
+                    case BlockCalculator.BlockOutcomeType.DeflectedLoose:
+                        outcome = ActionResultOutcome.Deflected;
+                        possessionPlayer = null;
+                        reason = "Shot deflected and loose.";
+                        break;
+                    default:
+                        outcome = blockResult.Blocked ? ActionResultOutcome.Blocked : ActionResultOutcome.Intercepted;
+                        possessionPlayer = blockResult.PossessionPlayer;
+                        reason = blockResult.Reason ?? "Shot blocked.";
+                        break;
+                }
+                return new ActionResult {
+                    Outcome = outcome,
+                    PrimaryPlayer = shooter,
+                    SecondaryPlayer = blockResult.Blocker,
+                    PossessionPlayer = possessionPlayer,
+                    Reason = reason
+                };
+            }
+            // --- End Block Logic ---
+
             return new ActionResult { Outcome = ActionResultOutcome.Success, PrimaryPlayer = shooter, Reason = "Shot Taken" };
         }
 
         private const float DOMINANT_HAND_PROBABILITY = 0.7f;
-private const float MIN_SPIN_VARIANCE = 0.8f;
-private const float MAX_SPIN_VARIANCE = 1.2f;
+        private const float MIN_SPIN_VARIANCE = 0.8f;
+        private const float MAX_SPIN_VARIANCE = 1.2f;
 
-private Vector3 CalculateShotSpinAxis(SimPlayer shooter, Vector3 horizontalAxis, Vector3 shotDirection, MatchState state)
+        private Vector3 CalculateShotSpinAxis(SimPlayer shooter, Vector3 horizontalAxis, Vector3 shotDirection, MatchState state)
         {
              if (shooter?.BaseData == null) return horizontalAxis; // Default if no data
 

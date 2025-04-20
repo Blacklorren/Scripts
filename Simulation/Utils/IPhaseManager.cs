@@ -1,7 +1,7 @@
 using HandballManager.Core;
-using HandballManager.Simulation.Core.MatchData;
+using HandballManager.Simulation.Engines;
 
-namespace HandballManager.Simulation.Utils // Changed from Interfaces to Utils
+namespace HandballManager.Simulation.Utils 
 {
     public interface IPhaseManager
     {

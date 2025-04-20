@@ -139,7 +139,7 @@ namespace HandballManager.Data
             {
                 Roster.Add(player);
                 player.CurrentTeamID = this.TeamID; // Assign player to this team
-                UpdateCurrentWageBill(); // Recalculate wages
+                UpdateWageBill(); // Recalculate wages
                 Debug.Log($"Player {player.FullName} (ID: {player.PlayerID}) added to team {this.Name} (ID: {this.TeamID}).");
                 return true;
             }
@@ -176,7 +176,7 @@ namespace HandballManager.Data
              {
                  Roster.Remove(playerToRemove);
                  playerToRemove.CurrentTeamID = null; // Player becomes a free agent (or moves via TransferManager)
-                 UpdateCurrentWageBill(); // Recalculate wages
+                 UpdateWageBill(); // Recalculate wages
                  Debug.Log($"Player {playerToRemove.FullName} (ID: {playerID}) removed from team {this.Name}.");
                  return true;
              }

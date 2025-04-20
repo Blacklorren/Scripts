@@ -1,14 +1,11 @@
-using HandballManager.Core.Logging;
 using HandballManager.Simulation.AI;
 using HandballManager.Simulation.Physics;
-using HandballManager.Simulation.Events;
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core.Interfaces;
 using HandballManager.Simulation.Utils;
 using System;
 using System.Threading;
 using UnityEngine;
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Events.Interfaces;
 
 namespace HandballManager.Simulation.Factories
 {
@@ -79,10 +76,10 @@ namespace HandballManager.Simulation.Factories
         /// <param name="cancellationToken">Optional token to allow cancellation of the simulation.</param>
         /// <returns>A new instance of MatchSimulator, ready to run a match.</returns>
         public MatchSimulator Create(
-            MatchState matchState,
-            IProgress<float> progress = null,
-            CancellationToken cancellationToken = default)
-        {
+    MatchState matchState,
+    IProgress<float> progress = null,
+    CancellationToken cancellationToken = default)
+{
             if (matchState == null)
             {
                 throw new ArgumentNullException(nameof(matchState));

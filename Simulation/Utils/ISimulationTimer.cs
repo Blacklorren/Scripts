@@ -1,5 +1,6 @@
-using HandballManager.Simulation.Core.MatchData;
+using HandballManager.Simulation.Engines;
 using HandballManager.Simulation.Events;
+using HandballManager.Simulation.Events.Interfaces;
 
 namespace HandballManager.Simulation.Utils // Changed from Interfaces to Utils
 {

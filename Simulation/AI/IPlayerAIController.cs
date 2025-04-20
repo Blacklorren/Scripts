@@ -1,9 +1,9 @@
-using HandballManager.Simulation.Core.MatchData; // Updated to reflect new location of MatchData
-using HandballManager.Data; // Missing dependency for Vector2
+using HandballManager.Data; 
 using UnityEngine;
+using HandballManager.Simulation.Engines;
 
 
-namespace HandballManager.Simulation.AI // Updated to match new folder location
+namespace HandballManager.Simulation.AI 
 {
     /// <summary>
     /// Defines a contract for orchestrating the decisions of AI-controlled players during a match simulation.

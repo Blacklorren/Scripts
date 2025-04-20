@@ -1,14 +1,11 @@
 using UnityEngine;
 using Zenject;
-using HandballManager.Simulation;
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Core.Interfaces;
 using HandballManager.Simulation.AI.Decision;
-using HandballManager.Simulation.Core.AI;
 using HandballManager.Simulation.Engines;
 using HandballManager.Data;
 using HandballManager.Gameplay;
 using HandballManager.Simulation.Factories;
+using HandballManager.Simulation.AI;
 
 namespace HandballManager.Installers
 {

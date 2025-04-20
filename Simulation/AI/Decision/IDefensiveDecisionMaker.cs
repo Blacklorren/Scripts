@@ -1,8 +1,7 @@
 // --- START OF FILE HandballManager/Simulation/AI/Decision/IDefensiveDecisionMaker.cs ---
-using HandballManager.Simulation.Core.MatchData; // Updated to new namespace
+using HandballManager.Simulation.Engines; // Updated to new namespace
 using HandballManager.Gameplay; // For Tactic
 using UnityEngine; // For Vector2
-using HandballManager.Core; // For PlayerAction enum
 
 namespace HandballManager.Simulation.AI.Decision // Updated namespace to match new folder structure
 {

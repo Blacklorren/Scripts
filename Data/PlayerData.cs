@@ -3,9 +3,20 @@ using System.Collections.Generic;
 using System.Linq; // Add Linq for Sum() and ToList() methods
 using HandballManager.Core; // For Enums like PlayerPosition, InjuryStatus, PlayerPersonalityTrait
 using UnityEngine; // For Mathf.Clamp, Range attribute, Debug.Log
+using HandballManager.Simulation.Engines; // For MatchState
 
 namespace HandballManager.Data
 {
+    /// <summary>
+    /// Represents the player's dominant shooting hand.
+    /// </summary>
+    public enum Handedness
+    {
+        Right,
+        Left,
+        Both
+    }
+
     public enum SquadStatus
     {
         KeyPlayer,
@@ -21,17 +32,130 @@ namespace HandballManager.Data
     [Serializable]
     public class PlayerData
     {
+        /// <summary>
+        /// Player's reaction attribute (0-100). Determines response speed in critical moments.
+        /// </summary>
+        public int Reaction { get; set; } = 50; // Default value, adjust as needed
+        /// <summary>
+        /// List of player traits (special skills, tags, etc.)
+        /// </summary>
+        public List<string> Traits { get; set; } = new List<string>();
+    
+        /// <summary>
+        /// The current MatchState this player is participating in (set during active matches).
+        /// </summary>
+        public MatchState CurrentMatchState { get; set; }
+
+        /// <summary>
+        /// The last time (in seconds since game start) this player committed a step violation.
+        /// </summary>
+        public float LastStepViolationTime { get; set; }
+
+        /// <summary>
+        /// Temporary bonus applied during ball shielding situations (set by physics/collision logic).
+        /// Should be reset/managed by simulation step as needed.
+        /// </summary>
+        public float BallProtectionBonus { get; set; } = 0f;
+
+        // --- Base Attributes ---
+        public BaseData BaseData { get; private set; }
+
+        // --- Jumping Mechanics ---
+        public bool IsJumping { get; private set; } = false;
+        public float JumpHeight { get; private set; } = 0f;
+        public float JumpTime { get; private set; } = 0f;
+        public float JumpDuration { get; private set; } = 0f;
+        public float VerticalPosition { get; private set; } = 0f;
+
+        /// <summary>
+        /// Calculates the effectiveness of shielding based on Strength and Balance attributes.
+        /// Returns a value between SHIELD_MIN_FACTOR and SHIELD_MAX_FACTOR.
+        /// </summary>
+        public float GetShieldingEffectiveness()
+        {
+            // Constants for min/max shielding effectiveness
+            const float SHIELD_MIN_FACTOR = 0.10f;
+            const float SHIELD_MAX_FACTOR = 0.60f;
+            float strength = BaseData?.Strength ?? 50f;
+            float agility = BaseData?.Agility ?? 50f;
+            // Weighted average: Strength (60%), Balance (40%)
+            float attributeScore = (strength * 0.6f + agility * 0.4f) / 100f;
+            return Mathf.Lerp(SHIELD_MIN_FACTOR, SHIELD_MAX_FACTOR, attributeScore);
+        }
+
+        public void InitiateJump()
+        {
+            if (!IsJumping)
+            {
+                IsJumping = true;
+                JumpTime = 0f;
+                float jumpFactor = Mathf.Lerp(
+                    SimConstants.JUMP_MIN_FACTOR,
+                    SimConstants.JUMP_MAX_FACTOR,
+                    (BaseData?.Jumping ?? SimConstants.PLAYER_DEFAULT_ATTRIBUTE_VALUE) / 100f);
+                JumpHeight = SimConstants.BASE_JUMP_HEIGHT * jumpFactor;
+                JumpDuration = SimConstants.BASE_JUMP_DURATION;
+            }
+        }
+
+        public void UpdateJump(float deltaTime)
+        {
+            if (IsJumping)
+            {
+                JumpTime += deltaTime;
+                float jumpProgress = JumpTime / JumpDuration;
+                float verticalPosition = Mathf.Sin(jumpProgress * Mathf.PI) * JumpHeight;
+                VerticalPosition = verticalPosition;
+                if (JumpTime >= JumpDuration)
+                {
+                    IsJumping = false;
+                    VerticalPosition = 0f;
+                    HandleJumpLanding();
+                }
+            }
+        }
+
+        private void HandleJumpLanding()
+        {
+            float landingStabilityLoss = Mathf.Lerp(
+                SimConstants.LANDING_MAX_IMPACT,
+                SimConstants.LANDING_MIN_IMPACT,
+                (BaseData?.Jumping ?? SimConstants.PLAYER_DEFAULT_ATTRIBUTE_VALUE) / 100f);
+            ApplyTemporaryAgilityReduction(landingStabilityLoss, SimConstants.LANDING_RECOVERY_TIME);
+        }
+
+        // You must implement this method elsewhere in the class if not present
+        public void ApplyTemporaryAgilityReduction(float reduction, float duration)
+        {
+            // TODO: Implement agility reduction logic
+        }
+
         public SquadStatus SquadStatus { get; set; } = SquadStatus.FirstTeam;
 
         // --- Identifiers ---
         public int PlayerID { get; set; } // Or use Guid: public Guid PlayerID { get; set; } = Guid.NewGuid();
         public string FirstName { get; set; } = "Default";
         public string LastName { get; set; } = "Player";
+
+        /// <summary>
+        /// The player's dominant shooting hand.
+        /// </summary>
+        public Handedness ShootingHand { get; set; } = Handedness.Right;
         public string KnownAs { get; set; } // Nickname or shorter name
         public string FullName => string.IsNullOrEmpty(KnownAs) ? $"{FirstName} {LastName}" : KnownAs; // Calculated full name
         public int Age { get; set; } = 20;
         public DateTime DateOfBirth { get; set; } = DateTime.Now.AddYears(-20); // Calculate Age from this?
         public string Nationality { get; set; } = "Unknown";
+
+        /// <summary>
+        /// Player height in centimeters.
+        /// </summary>
+        public int Height { get; set; } = 180;
+
+        /// <summary>
+        /// Player weight in kilograms.
+        /// </summary>
+        public int Weight { get; set; } = 75;
 
         // --- Contract/Status ---
         public int? CurrentTeamID { get; set; } // Nullable if free agent
@@ -397,7 +521,61 @@ namespace HandballManager.Data
 
         // Basic placeholder for unique IDs - replace with a robust system if needed
         private static int _nextId = 100; // Start player IDs from 100?
-        private static int GetNextUniqueID() { return _nextId++; }
+        public static int GetNextUniqueID() { return _nextId++; }
 
+        // --- Handball Step Tracking ---
+        public int StepCount { get; private set; } = 0;
+        public bool HasBall { get; set; } = false;
+        public bool IsDribbling { get; set; } = false;
+        /// <summary>
+        /// True si le joueur a déjà dribblé depuis la prise de possession (pour la règle de reprise de dribble)
+        /// </summary>
+        public bool HasDribbledSincePossession { get; set; } = false;
+
+
+        public void IncrementStep()
+        {
+            if (HasBall && !IsDribbling)
+            {
+                StepCount++;
+            }
+        }
+
+        public void ResetSteps()
+        {
+            StepCount = 0;
+            HasDribbledSincePossession = false;
+        }
+
+        public void StartPossession()
+        {
+            ResetSteps();
+        }
+
+        public void LosePossession()
+        {
+            ResetSteps();
+        }
+
+        public void StartDribble()
+        {
+            IsDribbling = true;
+            HasDribbledSincePossession = true;
+        }
+
+        public void EndDribble()
+        {
+            IsDribbling = false;
+        }
+
+        public bool IsDoubleDribbleViolation()
+        {
+            return HasDribbledSincePossession;
+        }
+
+        public bool ExceededStepLimit()
+        {
+            return StepCount > 3;
+        }
     } // End PlayerData Class
 }

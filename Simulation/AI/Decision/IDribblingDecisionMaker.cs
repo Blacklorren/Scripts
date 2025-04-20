@@ -1,6 +1,5 @@
-// --- START OF FILE HandballManager/Simulation/AI/Decision/IDribblingDecisionMaker.cs ---
-using HandballManager.Simulation.Core.MatchData; // Updated to reflect new location of MatchData
-using HandballManager.Gameplay; // For Tactic
+using HandballManager.Gameplay;
+using HandballManager.Simulation.Engines; // For Tactic
 
 namespace HandballManager.Simulation.AI.Decision // Updated to match new folder structure
 {

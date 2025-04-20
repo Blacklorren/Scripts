@@ -2,8 +2,8 @@ using UnityEngine;
 using System;
 using System.Collections.Generic; // For List
 using System.Linq;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Events; // For ToList() extension method
+using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Events.Interfaces; // For ToList() extension method
 
 namespace HandballManager.Simulation.Utils // Changed from Services to Utils
 {
@@ -28,7 +28,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
                 if (player == null) continue;
                 try {
                     // --- Suspension Timer & Re-entry Logic ---
-                    if (player.IsSuspended() && player.SuspensionTimer > 0) {
+                    if (player.IsSuspended()) {
                         player.SuspensionTimer -= deltaTime;
                         if (player.SuspensionTimer <= 0f) {
                             player.SuspensionTimer = 0f;

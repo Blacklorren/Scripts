@@ -1,4 +1,4 @@
-using HandballManager.Core; // For PlayerPosition enum
+using HandballManager.Core;
 
 namespace HandballManager.Simulation.Utils
 {

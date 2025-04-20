@@ -11,14 +11,8 @@ using HandballManager.Simulation.AI.Decision;
 using HandballManager.Simulation.AI.Evaluation;
 using HandballManager.Simulation.AI.Positioning;
 using HandballManager.Simulation.Physics;
-using HandballManager.Simulation.Core.Interfaces;
 using HandballManager.Simulation.Utils;
-using HandballManager.Simulation.Events;
 using HandballManager.Simulation.AI;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core;
-using IMatchEngine = HandballManager.Simulation.Core.Interfaces.IMatchEngine;
-
 #endregion
 
 #region System Dependencies
@@ -27,6 +21,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using HandballManager.Simulation.Events.Interfaces;
 
 
 #endregion
@@ -332,7 +327,7 @@ namespace HandballManager.Simulation.Engines
                     // Only resolve actions for players whose action timer has completed and are on court and not suspended
                     if (player.IsOnCourt && !player.IsSuspended() && player.ActionTimer <= 0f)
                     {
-                        var result = _actionResolver.ResolvePreparedAction(player, _currentMatchState);
+                        var result = _actionResolver.ResolvePreparedAction(player, _currentMatchState, _currentMatchState.GameStateEvaluator);
                         _logger?.LogInformation($"Resolved action for Player {player.GetPlayerId()} (Team {player.TeamSimId}): {player.CurrentAction} -> {result.Outcome}");
                     }
                 }

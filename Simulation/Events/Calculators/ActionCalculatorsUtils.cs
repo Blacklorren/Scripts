@@ -1,8 +1,4 @@
-// --- START OF FILE HandballManager/Simulation/Events/Calculators/ActionCalculatorUtils.cs ---
-using HandballManager.Simulation.Core;
-using HandballManager.Simulation.Core.Constants;
-using HandballManager.Simulation.Core.MatchData;
-using HandballManager.Simulation.Core.Utils;
+using HandballManager.Simulation.Engines;
 using HandballManager.Simulation.Utils;
 using UnityEngine;
 
@@ -126,5 +122,52 @@ namespace HandballManager.Simulation.Events.Calculators
              }
              return defendersBlocking <= 1; // Clear chance if 0 or 1 field defender is potentially obstructing
          }
+
+        /// <summary>
+        /// Calculates how "open" a player is (not marked by defenders).
+        /// Returns a value from 0.0 (heavily marked) to 1.0 (completely open).
+        /// </summary>
+        /// <param name="player">The player whose openness is being evaluated.</param>
+        /// <param name="state">The current match state.</param>
+        /// <returns>Openness score between 0.0 (not open) and 1.0 (completely open).</returns>
+        public static float CalculatePlayerOpenness(SimPlayer player, MatchState state)
+        {
+            if (player == null || state == null)
+            {
+                Debug.LogWarning("CalculatePlayerOpenness called with null player or state.");
+                return 0f;
+            }
+            var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
+            if (opponents == null)
+            {
+                Debug.LogWarning("CalculatePlayerOpenness: No opponents found for player " + player.TeamSimId);
+                return 1f; // No defenders, fully open
+            }
+            float minDistSqr = float.MaxValue;
+            int defendersInRadius = 0;
+            foreach (var defender in opponents)
+            {
+                if (defender == null || defender.IsSuspended() || defender.IsGoalkeeper()) continue;
+                float distSqr = (player.Position - defender.Position).sqrMagnitude;
+                if (distSqr < ActionResolverConstants.OPENNESS_DEFENDER_RADIUS * ActionResolverConstants.OPENNESS_DEFENDER_RADIUS)
+                {
+                    defendersInRadius++;
+                    if (distSqr < minDistSqr)
+                        minDistSqr = distSqr;
+                }
+            }
+            // If no defenders in radius, fully open
+            if (defendersInRadius == 0)
+                return 1f;
+            // Openness decreases with more/closer defenders
+            float distFactor = Mathf.Clamp01(Mathf.Sqrt(minDistSqr) / ActionResolverConstants.OPENNESS_DEFENDER_RADIUS);
+            float defenderFactor = 1f / (defendersInRadius + 1f); // +1 to avoid div by zero
+            // Optionally: factor in position relative to goal/ball here
+            float openness = distFactor * defenderFactor;
+            openness = Mathf.Clamp01(openness);
+            if (openness < 0.01f)
+                Debug.Log($"Player {player.GetPlayerId()} is heavily marked (openness={openness})");
+            return openness;
+        }
     }
 }
