@@ -1,7 +1,8 @@
 using System; // For Serializable, DateTime, Guid
 using System.Collections.Generic;
-using HandballManager.Simulation.Engines;
-using UnityEngine; // Required for Debug.Log potentially
+using HandballManager.Core;
+using UnityEngine;
+using static HandballManager.Data.TeamMatchStats; // Required for Debug.Log potentially
 
 namespace HandballManager.Data
 {
@@ -32,6 +33,9 @@ namespace HandballManager.Data
         public int RedCards { get; set; } = 0; // Number of direct red cards received
 
         // --- Calculated Properties ---
+
+    // PlayerSnapshotDto and MatchSnapshotDto have been moved to their own files in HandballManager.Data.
+    // Please use 'using HandballManager.Data;' and reference these DTOs directly.
 
         /// <summary>Goals Scored / Shots Taken * 100</summary>
         public float ShootingPercentage => ShotsTaken == 0 ? 0f : (float)GoalsScored / ShotsTaken * 100f;
@@ -74,12 +78,12 @@ namespace HandballManager.Data
         /// <summary>
         /// List of key events that occurred during the match (goals, fouls, etc.).
         /// </summary>
-        public List<MatchEvent> MatchEvents { get; set; } = new List<MatchEvent>();
+        public List<MatchEventDto> MatchEvents { get; set; } = new List<MatchEventDto>();
 
         /// <summary>
-        /// The final state of the match at the end of simulation.
+        /// A serializable snapshot of the final state of the match at the end of simulation.
         /// </summary>
-        public MatchState FinalMatchState { get; set; }
+        public MatchSnapshotDto FinalMatchSnapshot { get; set; } // DTO now imported from HandballManager.Data
 
         // Optional: Add more details later if needed
         // public Dictionary<int, PlayerMatchStats> PlayerStats { get; set; } // PlayerID -> Stats for this match
@@ -87,15 +91,15 @@ namespace HandballManager.Data
 
 
         /// <summary>
-        /// Default constructor for serialization.
+        /// Default constructor for serialization only. Do not use for new results.
         /// </summary>
         public MatchResult() {
-            MatchID = Guid.NewGuid();
-             // Initialize stats objects to prevent null reference issues
-            HomeStats = new TeamMatchStats();
-            AwayStats = new TeamMatchStats();
-            AssignMatchDate();
-        }
+    MatchID = Guid.NewGuid();
+    HomeStats = new TeamMatchStats();
+    AwayStats = new TeamMatchStats();
+    MatchDate = DateTime.MinValue; // Should be set by deserializer
+    MatchEvents = new List<MatchEventDto>();
+}
 
         /// <summary>
         /// Constructor for MatchResult. Initializes core info and stats objects.
@@ -104,35 +108,19 @@ namespace HandballManager.Data
         /// <param name="awayId">Away Team ID.</param>
         /// <param name="homeName">Home Team Name.</param>
         /// <param name="awayName">Away Team Name.</param>
-        public MatchResult(int homeId, int awayId, string homeName = "Home", string awayName = "Away")
-        {
-            MatchID = Guid.NewGuid();
-            HomeTeamID = homeId;
-            AwayTeamID = awayId;
-            HomeTeamName = homeName ?? "Home";
-            AwayTeamName = awayName ?? "Away";
-            HomeStats = new TeamMatchStats(); // Ensure stats are initialized
-            AwayStats = new TeamMatchStats(); // Ensure stats are initialized
-            AssignMatchDate();
-        }
-
-        /// <summary>
-        /// Helper method to assign the match date, trying to get it from GameManager
-        /// or falling back to current system time.
-        /// </summary>
-        private void AssignMatchDate()
-        {
-            // Attempt to get current game date, otherwise use system time as fallback
-            try {
-                 // Added namespace for clarity if needed
-                 MatchDate = HandballManager.Core.GameManager.Instance.TimeManager.CurrentDate;
-            } catch (Exception) {
-                 // Log warning only if GameManager or TimeManager likely should exist but don't
-                 // Avoid spamming logs during isolated testing where GameManager might be absent.
-                 // Debug.LogWarning($"Could not get game date for MatchResult, using system time. Error: {ex.Message}");
-                 MatchDate = DateTime.Now.Date;
-            }
-        }
+        /// <param name="matchDate">Date of the match (must be provided by simulation layer).</param>
+        public MatchResult(int homeId, int awayId, string homeName, string awayName, DateTime matchDate)
+{
+    MatchID = Guid.NewGuid();
+    HomeTeamID = homeId;
+    AwayTeamID = awayId;
+    HomeTeamName = homeName ?? "Home";
+    AwayTeamName = awayName ?? "Away";
+    HomeStats = new TeamMatchStats();
+    AwayStats = new TeamMatchStats();
+    MatchDate = matchDate;
+    MatchEvents = new List<MatchEventDto>();
+}
 
 
          /// <summary>

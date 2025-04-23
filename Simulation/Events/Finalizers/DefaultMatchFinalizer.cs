@@ -36,25 +36,23 @@ namespace HandballManager.Simulation.Events.Finalizers
             // --- Logic copied from MatchSimulator ---
              if (state == null) {
                  Debug.LogError("[DefaultMatchFinalizer] Cannot finalize result, MatchState is null!");
-                 return new MatchResult(ErrMissingHomeTeam, ErrMissingAwayTeam, ErrorTeamName, "NULL_STATE") { MatchDate = matchDate }; // Use passed date
+                 return new MatchResult(ErrMissingHomeTeam, ErrMissingAwayTeam, ErrorTeamName, "NULL_STATE", matchDate); // Use passed date
              }
 
              if (state.HomeTeamData == null || state.AwayTeamData == null) {
                  Debug.LogError($"[DefaultMatchFinalizer] Missing team data - Home: {state.HomeTeamData?.TeamID ?? -1}, Away: {state.AwayTeamData?.TeamID ?? -1}");
-                 return new MatchResult(ErrMissingHomeTeam, ErrMissingAwayTeam, ErrorTeamName, "MISSING_TEAM_DATA") {
-                     MatchDate = matchDate
-                 };
+                 return new MatchResult(ErrMissingHomeTeam, ErrMissingAwayTeam, ErrorTeamName, "MISSING_TEAM_DATA", matchDate);
              }
 
              MatchResult result = new MatchResult(
                  state.HomeTeamData.TeamID,
                  state.AwayTeamData.TeamID,
                  state.HomeTeamData.Name,
-                 state.AwayTeamData.Name
+                 state.AwayTeamData.Name,
+                 matchDate
              ) {
                  HomeScore = state.HomeScore,
                  AwayScore = state.AwayScore,
-                 MatchDate = matchDate,
                  HomeStats = state.CurrentHomeStats ?? new TeamMatchStats(),
                  AwayStats = state.CurrentAwayStats ?? new TeamMatchStats()
              };

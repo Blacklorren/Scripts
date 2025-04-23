@@ -46,7 +46,7 @@ namespace HandballManager.Simulation
         /// <param name="team">The team data to process training for.</param>
         /// <param name="focus">The primary training focus for the week.</param>
         /// <param name="intensityLevel">Enum defining training intensity.</param>
-        public void SimulateWeekTraining(TeamData team, TrainingFocus focus = TrainingFocus.General, Intensity intensityLevel = Intensity.Normal)
+        public void SimulateWeekTraining(TeamData team, TrainingFocus focus = TrainingFocus.General, HandballManager.Core.Intensity intensityLevel = HandballManager.Core.Intensity.Normal, DateTime currentDate = default)
         {
             if (team == null || team.Roster == null) return;
 
@@ -103,7 +103,7 @@ namespace HandballManager.Simulation
                      SimulateAttributeGains(player, focus, currentGainMod, facilityMod, coachMod);
                 }
                 ApplyConditionChange(player, currentCondMod, facilityMod, player.NaturalFitness);
-                CheckForTrainingInjury(player, currentInjuryMod, facilityMod, player.Resilience, player.Condition);
+                CheckForTrainingInjury(player, currentInjuryMod, facilityMod, player.Resilience, player.Condition, currentDate);
             }
 
             // TODO: Generate and return/store a training report summary (e.g., who improved, any injuries)
@@ -228,7 +228,7 @@ namespace HandballManager.Simulation
         /// <summary>
         /// Checks if a player sustains an injury during training based on risk factors.
         /// </summary>
-        private void CheckForTrainingInjury(PlayerData player, float intensityInjuryMod, float facilityMod, int resilience, float currentCondition)
+        private void CheckForTrainingInjury(PlayerData player, float intensityInjuryMod, float facilityMod, int resilience, float currentCondition, DateTime currentDate)
         {
              // Higher intensity, lower resilience, poor facilities increase risk. Low condition increases risk.
              float resilienceFactor = Mathf.Lerp(1.5f, 0.5f, resilience / 100f); // High resilience reduces risk
@@ -250,13 +250,13 @@ namespace HandballManager.Simulation
 
                  if (severityRoll < majorThreshold) {
                      int duration = UnityEngine.Random.Range(60, 180);
-                     player.InflictInjury(InjuryStatus.MajorInjury, duration, "Major Training Injury");
+                     player.InflictInjury(InjuryStatus.MajorInjury, duration, "Major Training Injury", currentDate);
                  } else if (severityRoll < moderateThreshold) {
                      int duration = UnityEngine.Random.Range(14, 59);
-                      player.InflictInjury(InjuryStatus.ModerateInjury, duration, "Moderate Training Injury");
+                      player.InflictInjury(InjuryStatus.ModerateInjury, duration, "Moderate Training Injury", currentDate);
                  } else {
                      int duration = UnityEngine.Random.Range(3, 13);
-                      player.InflictInjury(InjuryStatus.MinorInjury, duration, "Minor Training Strain");
+                      player.InflictInjury(InjuryStatus.MinorInjury, duration, "Minor Training Strain", currentDate);
                  }
              }
         }
@@ -328,9 +328,5 @@ namespace HandballManager.Simulation
              }
              return attributes;
         }
-
-        /// <summary> Enum for Training Intensity </summary>
-        public enum Intensity { Low, Normal, High }
-
-    } // End TrainingSimulator Class
+    }
 }

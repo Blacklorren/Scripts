@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq; // Add Linq for Sum() and ToList() methods
 using HandballManager.Core; // For Enums like PlayerPosition, InjuryStatus, PlayerPersonalityTrait
 using UnityEngine; // For Mathf.Clamp, Range attribute, Debug.Log
-using HandballManager.Simulation.Engines; // For MatchState
 
 namespace HandballManager.Data
 {
@@ -40,11 +39,6 @@ namespace HandballManager.Data
         /// List of player traits (special skills, tags, etc.)
         /// </summary>
         public List<string> Traits { get; set; } = new List<string>();
-    
-        /// <summary>
-        /// The current MatchState this player is participating in (set during active matches).
-        /// </summary>
-        public MatchState CurrentMatchState { get; set; }
 
         /// <summary>
         /// The last time (in seconds since game start) this player committed a step violation.
@@ -169,6 +163,12 @@ namespace HandballManager.Data
         public DateTime InjuryReturnDate { get; set; } = DateTime.MinValue; // Date when player returns from injury
         public string InjuryDescription { get; set; } = ""; // e.g., "Sprained Ankle"
         public TransferStatus TransferStatus { get; set; } = TransferStatus.Unavailable; // Player's availability
+
+        // --- Performance Tracking (for wage calculation) ---
+        public float LastSeasonAverageRating { get; set; } = 6.5f; // Out of 10
+        public int LastSeasonGoals { get; set; } = 0;
+        public int LastSeasonAssists { get; set; } = 0;
+        public int LastSeasonAppearances { get; set; } = 0;
 
         // --- Position ---
         public PlayerPosition PrimaryPosition { get; set; } = PlayerPosition.CentreBack;
@@ -329,29 +329,18 @@ namespace HandballManager.Data
         /// <summary>
         /// Checks if the player is currently injured based on status and return date.
         /// </summary>
-        public bool IsInjured()
+        public bool IsInjured(DateTime currentDate)
         {
             // Check status first, then ensure return date is in the future
             if (CurrentInjuryStatus != InjuryStatus.Healthy)
             {
                 try
                 {
-                    // Ensure GameManager and TimeManager instances exist before accessing
-                    if (Core.GameManager.Instance != null && Core.GameManager.Instance.TimeManager != null)
-                    {
-                         // Compare dates only
-                         return InjuryReturnDate.Date > Core.GameManager.Instance.TimeManager.CurrentDate.Date;
-                    }
-                    else
-                    {
-                        // If managers aren't ready (e.g., during initial setup), assume injured if status is not Healthy
-                        Debug.LogWarning($"GameManager or TimeManager not ready for injury check for {FullName}. Assuming injured based on status.");
-                        return true;
-                    }
+                    // Compare with provided current date
+                    return InjuryReturnDate.Date > currentDate.Date;
                 }
                 catch (Exception ex)
                 {
-                    // Handle other potential exceptions during date comparison
                     Debug.LogWarning($"Error checking injury date for {FullName}: {ex.Message}");
                     return true; // Assume injured if we can't check date properly
                 }
@@ -359,39 +348,30 @@ namespace HandballManager.Data
             return false; // Not injured if status is Healthy
         }
 
-
         /// <summary>
         /// Updates the player's injury status if the return date has passed.
         /// Should be called daily (e.g., by GameManager).
         /// </summary>
-        public void UpdateInjuryStatus()
+        public void UpdateInjuryStatus(DateTime currentDate)
         {
             if (CurrentInjuryStatus != InjuryStatus.Healthy)
             {
-                 try
-                 {
-                     // Ensure GameManager and TimeManager instances exist before accessing
-                     if (Core.GameManager.Instance != null && Core.GameManager.Instance.TimeManager != null)
-                     {
-                         if (InjuryReturnDate.Date <= Core.GameManager.Instance.TimeManager.CurrentDate.Date)
-                         {
-                             Debug.Log($"{FullName} has recovered from {InjuryDescription}.");
-                             CurrentInjuryStatus = InjuryStatus.Healthy;
-                             InjuryReturnDate = DateTime.MinValue;
-                             InjuryDescription = "";
-                             // Player returns with reduced condition after injury
-                             Condition = Mathf.Clamp(Condition * 0.7f, 0.1f, 0.8f); // Example: return at 70% of previous, max 80% initially
-                         }
-                     } else {
-                          // Cannot update status if managers aren't ready
-                          // Debug.LogWarning($"Cannot update injury status for {FullName}: GameManager or TimeManager not ready.");
-                     }
-                 }
-                 catch (Exception ex)
-                 {
-                     Debug.LogWarning($"Error updating injury status for {FullName}: {ex.Message}");
-                     // Don't change status if date check fails
-                 }
+                try
+                {
+                    if (InjuryReturnDate.Date <= currentDate.Date)
+                    {
+                        // Player returns from injury
+                        CurrentInjuryStatus = InjuryStatus.Healthy;
+                        InjuryDescription = string.Empty;
+                        // Optionally reset condition, morale, etc.
+                        Condition = Mathf.Clamp(Condition * 0.7f, 0.1f, 0.8f); // Example: return at 70% of previous, max 80% initially
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"Error updating injury status for {FullName}: {ex.Message}");
+                    // Don't change status if date check fails
+                }
             }
         }
 
@@ -401,28 +381,18 @@ namespace HandballManager.Data
         /// <param name="status">The severity of the injury.</param>
         /// <param name="durationDays">Estimated duration in days.</param>
         /// <param name="description">Description of the injury.</param>
-        public void InflictInjury(InjuryStatus status, int durationDays, string description)
+        public void InflictInjury(InjuryStatus status, int durationDays, string description, DateTime currentDate)
         {
             if (status == InjuryStatus.Healthy) return; // Cannot inflict 'healthy'
 
             CurrentInjuryStatus = status;
             try
             {
-                // Ensure GameManager and TimeManager instances exist before accessing
-                if (Core.GameManager.Instance != null && Core.GameManager.Instance.TimeManager != null)
-                {
-                    InjuryReturnDate = Core.GameManager.Instance.TimeManager.CurrentDate.AddDays(durationDays);
-                }
-                else
-                {
-                     // Fallback if game time unavailable (e.g., during setup)
-                     Debug.LogWarning($"GameManager/TimeManager not ready. Setting injury return date relative to system time for {FullName}.");
-                     InjuryReturnDate = DateTime.Now.Date.AddDays(durationDays);
-                }
+                InjuryReturnDate = currentDate.Date.AddDays(durationDays);
             }
             catch (Exception ex) {
-                 Debug.LogError($"Error setting injury return date for {FullName}: {ex.Message}. Using fallback.");
-                 InjuryReturnDate = DateTime.Now.Date.AddDays(durationDays);
+                Debug.LogError($"Error setting injury return date for {FullName}: {ex.Message}. Using fallback.");
+                InjuryReturnDate = DateTime.Now.Date.AddDays(durationDays);
             }
 
             InjuryDescription = description;
@@ -577,5 +547,35 @@ namespace HandballManager.Data
         {
             return StepCount > 3;
         }
+
+        /// <summary>
+        /// Dynamically computes the expected wage based on ability, age, potential, and last season's performance.
+        /// </summary>
+        public float GetExpectedWage()
+        {
+            // Base wage by ability (e.g., CA out of 100)
+            float baseWage = 500f + (CurrentAbility * 25f);
+
+            // Age adjustment: peak years (24-29) = +20%, decline after 30 = -15%
+            float ageFactor = 1.0f;
+            if (Age >= 24 && Age <= 29)
+                ageFactor = 1.2f;
+            else if (Age >= 30)
+                ageFactor = 0.85f;
+
+            // Potential adjustment: high PA = higher expectation
+            float potentialFactor = 1.0f + ((PotentialAbility - CurrentAbility) / 200f);
+
+            // Performance adjustment: e.g., average rating (out of 10)
+            float performanceFactor = 1.0f;
+            if (LastSeasonAverageRating > 7.0f)
+                performanceFactor += 0.15f;
+            else if (LastSeasonAverageRating < 6.0f)
+                performanceFactor -= 0.10f;
+
+            // Combine factors
+            return baseWage * ageFactor * potentialFactor * performanceFactor;
+        }
+
     } // End PlayerData Class
 }

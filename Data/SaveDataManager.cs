@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using HandballManager.Core;
-using HandballManager.Management;
+
 using UnityEngine;
 
 namespace HandballManager.Data
@@ -24,16 +24,17 @@ namespace HandballManager.Data
         public int PlayerTeamID = -1;
         // LeagueManager save data (JsonUtility struggles with Dictionary directly)
         public List<int> LeagueTableKeys = new List<int>();
-        public List<List<LeagueStandingEntry>> LeagueTableValues = new List<List<LeagueStandingEntry>>();
+        public List<List<HandballManager.Data.LeagueStandingEntry>> LeagueTableValues = new List<List<HandballManager.Data.LeagueStandingEntry>>();
         // Add ScheduleManager save data if needed
         // public List<int> ScheduleKeys = new List<int>();
-        // public List<List<MatchInfo>> ScheduleValues = new List<List<MatchInfo>>();
+        // public List<List<HandballManager.Data.MatchInfo>> ScheduleValues = new List<List<HandballManager.Data.MatchInfo>>();
     }
 
     /// <summary>
     /// Dedicated persistence layer for saving and loading game data.
     /// Uses a more efficient serialization approach than the previous JSON implementation.
     /// </summary>
+    // TODO: Toute l'orchestration Save/Load doit être faite par GameManager (Core), SaveDataManager ne manipule que des types Data purs.
     public class SaveDataManager
     {
         private const string SAVE_DIRECTORY = "saves";

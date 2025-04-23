@@ -45,22 +45,8 @@ namespace HandballManager.Simulation.Events.Handlers
 
         public void HandleActionResult(ActionResult result, MatchState state)
         {
-            // Vérifier après chaque action si une violation passive doit entraîner un turnover
-            if (_passivePlayManager != null && _passivePlayManager.PassivePlayWarningActive && _passivePlayManager.WarningTeamSimId == state.PossessionTeamId && _passivePlayManager.AttackTimer == 0f && _passivePlayManager.PassivePlayWarningActive)
-            {
-                // Si PassivePlayManager signale une violation (par exemple via un flag ou callback, à adapter selon l'implémentation réelle)
-                LogEvent(state, $"Turnover pour jeu passif de l'équipe {state.PossessionTeamId}.");
-                // Créer un ActionResult spécial pour turnover passif
-                var passiveTurnover = new ActionResult
-                {
-                    Outcome = ActionResultOutcome.Turnover,
-                    PrimaryPlayer = null,
-                    Reason = "Passive play violation"
-                };
-                HandleTurnover(passiveTurnover, state);
-                _passivePlayManager.ResetPassivePlay();
-                return;
-            }
+            // Passive play turnovers are now handled via the SimBall.OnPassCompletedBetweenTeammates event in MatchSimulator.
+            // No direct check needed here.
 
             // --- Logic copied from MatchSimulator ---
              if (state == null) { Debug.LogError("[DefaultMatchEventHandler] HandleActionResult called with null MatchState."); return; }
@@ -200,7 +186,7 @@ namespace HandballManager.Simulation.Events.Handlers
             else { LogEvent(state, $"Action failed: {reason}."); HandlePossessionChange(state, -1, true); }
         }
 
-        private void HandleTurnover(ActionResult result, MatchState state)
+        public void HandleTurnover(ActionResult result, MatchState state)
         {
             // Réinitialiser le jeu passif sur turnover explicite
             _passivePlayManager?.ResetPassivePlay();
@@ -405,7 +391,7 @@ namespace HandballManager.Simulation.Events.Handlers
 
         // --- Helper Methods (Copied & Adapted) ---
 
-        private void IncrementStat(MatchState state, SimPlayer player, Action<TeamMatchStats> updateAction)
+        public void IncrementStat(MatchState state, SimPlayer player, Action<TeamMatchStats> updateAction)
 {
     if (player?.BaseData == null || state == null || updateAction == null)
         return;
@@ -421,7 +407,7 @@ namespace HandballManager.Simulation.Events.Handlers
     }
 }
 
-private void IncrementStat(MatchState state, int teamSimId, Action<TeamMatchStats> updateAction)
+protected void IncrementStat(MatchState state, int teamSimId, Action<TeamMatchStats> updateAction)
 {
     if (state == null || updateAction == null || (teamSimId != 0 && teamSimId != 1))
         return;

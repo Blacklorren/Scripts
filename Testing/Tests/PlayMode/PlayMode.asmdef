@@ -1,0 +1,31 @@
+{
+    "name": "PlayMode",
+    "rootNamespace": "",
+    "references": [
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner",
+        "HandballManager.Simulation",
+        "HandballManager.core",
+        "HandballManager.Data",
+        "HandballManager.Gameplay",
+        "Zenject",
+        "Zenject-TestFramework",
+        "HandballManager.Core",
+        "Zenject-UnitTests-Editor",
+        "Zenject-Editor"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Zenject-usage.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

@@ -6,6 +6,16 @@ using UnityEngine;
 namespace HandballManager.Simulation.Engines
 {
     /// <summary>
+    /// Status for passive play checks.
+    /// </summary>
+    public enum PassivePlayStatus
+    {
+        Okay,
+        WarningTriggered,
+        ViolationTriggered
+    }
+
+    /// <summary>
     /// Manages passive play detection and warning system in match simulation.
     /// </summary>
     public class PassivePlayManager
@@ -30,9 +40,9 @@ namespace HandballManager.Simulation.Engines
         /// <summary>
         /// Call this every frame with deltaTime. Should also be called on possession change.
         /// </summary>
-        public void Update(float deltaTime)
+        public PassivePlayStatus Update(float deltaTime)
         {
-            if (_matchState == null) return;
+            if (_matchState == null) return PassivePlayStatus.Okay;
             int currentPossession = _matchState.PossessionTeamId;
 
             // Detect change of possession
@@ -40,7 +50,7 @@ namespace HandballManager.Simulation.Engines
             {
                 ResetAll();
                 _previousPossessionTeamId = currentPossession;
-                return;
+                return PassivePlayStatus.Okay;
             }
 
             if (!PassivePlayWarningActive)
@@ -49,22 +59,26 @@ namespace HandballManager.Simulation.Engines
                 if (AttackTimer >= ATTACK_TIME_LIMIT)
                 {
                     TriggerPassivePlayWarning(_matchState.PossessionTeamId);
+                    return PassivePlayStatus.WarningTriggered;
                 }
             }
             // No timer after warning, only passes
+            return PassivePlayStatus.Okay;
         }
 
         /// <summary>
         /// Call this when a pass is made by the team in possession.
         /// </summary>
-        public void OnPassMade(int teamSimId)
+        public PassivePlayStatus OnPassMade(int teamSimId)
         {
-            if (!PassivePlayWarningActive || WarningTeamSimId != teamSimId) return;
+            if (!PassivePlayWarningActive || WarningTeamSimId != teamSimId) return PassivePlayStatus.Okay;
             _passesSinceWarning++;
             if (_passesSinceWarning > PASSES_AFTER_WARNING_LIMIT)
             {
                 TriggerPassivePlayViolation();
+                return PassivePlayStatus.ViolationTriggered;
             }
+            return PassivePlayStatus.Okay;
         }
 
         /// <summary>
@@ -95,7 +109,7 @@ namespace HandballManager.Simulation.Engines
 
         private void TriggerPassivePlayViolation()
         {
-            Debug.Log($"[PassivePlay] Violation! Turnover for team {WarningTeamSimId}");
+            // Violation consequence will be handled by event handler. Only reset state here.
             ResetAll();
             // Implement turnover logic in MatchSimulator or event handler
         }

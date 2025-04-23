@@ -105,6 +105,17 @@ namespace HandballManager.Core
     }
 
     // Add other simple enums as needed, e.g., PlayerPersonalityTrait, TransferStatus etc.
+
+    /// <summary>
+    /// Defines intensity levels for training or simulation.
+    /// </summary>
+    public enum Intensity
+    {
+        Low,
+        Normal,
+        High
+    }
+
     /// <summary>
     /// Defines personality traits that influence player behavior during matches.
     /// </summary>

@@ -1,195 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using HandballManager.Data; // For MatchResult, TeamData
-using HandballManager.Core; // For PlayerPosition, Enums
+using HandballManager.Data; // For MatchResult, TeamData, LeagueStandingEntry, HeadToHeadRecord, PlayerSeasonStats, HeadToHeadResult
+// using HandballManager.Core; // For PlayerPosition, Enums (removed for decoupling GameManager)
 using UnityEngine;
 
 namespace HandballManager.Management
 {
-    /// <summary>
-    /// Represents a single entry in the league table.
-    /// Needs to be Serializable if saved directly.
-    /// </summary>
-    [Serializable]
-    public class LeagueStandingEntry
-    {
-        public int TeamID;
-        public string TeamName;
-        public int Played = 0;
-        public int Wins = 0;
-        public int Draws = 0;
-        public int Losses = 0;
-        public int GoalsFor = 0;
-        public int GoalsAgainst = 0;
-        public int GoalDifference => GoalsFor - GoalsAgainst;
-        public int Points => (Wins * 2) + (Draws * 1); // Standard Handball points (2 for win, 1 for draw)
-
-        // Head-to-head tracking
-        [NonSerialized] public Dictionary<int, HeadToHeadRecord> HeadToHeadRecords = new Dictionary<int, HeadToHeadRecord>();
-
-        /// <summary>
-        /// Constructor for LeagueStandingEntry
-        /// </summary>
-        /// <param name="teamId">The team's unique identifier</param>
-        /// <param name="teamName">The team's name</param>
-        public LeagueStandingEntry(int teamId, string teamName)
-        {
-            TeamID = teamId;
-            TeamName = teamName;
-            HeadToHeadRecords = new Dictionary<int, HeadToHeadRecord>();
-        }
-
-        // Default constructor for serialization
-        public LeagueStandingEntry() { }
-    }
-
-    /// <summary>
-    /// Tracks head-to-head record between two teams
-    /// </summary>
-    [Serializable]
-    public class HeadToHeadRecord
-    {
-        public int OpponentTeamID;
-        public int Wins = 0;
-        public int Draws = 0;
-        public int Losses = 0;
-        public int GoalsFor = 0;
-        public int GoalsAgainst = 0;
-
-        public int Points => (Wins * 2) + (Draws * 1);
-        public int GoalDifference => GoalsFor - GoalsAgainst;
-
-        public HeadToHeadRecord(int opponentId)
-        {
-            OpponentTeamID = opponentId;
-        }
-    }
-
-    /// <summary>
-    /// Tracks a player's statistics for a single season
-    /// </summary>
-    [Serializable]
-    public class PlayerSeasonStats
-    {
-        public int PlayerID;
-        public string PlayerName;
-        public int TeamID;
-        public int LeagueID;
-        public int MatchesPlayed = 0;
-        public int Goals = 0;
-        public int Assists = 0;
-        public int TwoMinuteSuspensions = 0;
-        public int RedCards = 0;
-        public int ShotsTaken = 0;
-        public int ShotsOnTarget = 0;
-        public int SavesMade = 0; // For goalkeepers
-        public int PenaltiesScored = 0;
-        public int PenaltiesTaken = 0;
-
-        // Calculated properties
-        public float ShotAccuracy => ShotsTaken > 0 ? (float)ShotsOnTarget / ShotsTaken * 100f : 0f;
-        public float GoalEfficiency => ShotsOnTarget > 0 ? (float)Goals / ShotsOnTarget * 100f : 0f;
-        public float GoalsPerMatch => MatchesPlayed > 0 ? (float)Goals / MatchesPlayed : 0f;
-
-        public PlayerSeasonStats(int playerId, string playerName, int teamId, int leagueId)
-        {
-            PlayerID = playerId;
-            PlayerName = playerName;
-            TeamID = teamId;
-            LeagueID = leagueId;
-        }
-
-        // Default constructor for serialization
-        public PlayerSeasonStats() { }
-    }
-
-    /// <summary>
-    /// Tracks head-to-head results between teams for tiebreaking purposes
-    /// </summary>
-    [Serializable]
-    public class HeadToHeadResult
-    {
-        public int Team1ID;
-        public int Team2ID;
-        public List<MatchResult> Matches = new List<MatchResult>();
-
-        public HeadToHeadResult(int team1Id, int team2Id)
-        {
-            Team1ID = team1Id;
-            Team2ID = team2Id;
-        }
-
-        public void AddMatch(MatchResult result)
-        {
-            if ((result.HomeTeamID == Team1ID && result.AwayTeamID == Team2ID) ||
-                (result.HomeTeamID == Team2ID && result.AwayTeamID == Team1ID))
-            {
-                Matches.Add(result);
-            }
-        }
-
-        public int GetPointsForTeam(int teamId)
-        {
-            int points = 0;
-            foreach (var match in Matches)
-            {
-                if (match.HomeTeamID == teamId)
-                {
-                    if (match.HomeScore > match.AwayScore) points += 2; // Win
-                    else if (match.HomeScore == match.AwayScore) points += 1; // Draw
-                }
-                else if (match.AwayTeamID == teamId)
-                {
-                    if (match.AwayScore > match.HomeScore) points += 2; // Win
-                    else if (match.HomeScore == match.AwayScore) points += 1; // Draw
-                }
-            }
-            return points;
-        }
-
-        public int GetGoalDifferenceForTeam(int teamId)
-        {
-            int goalsFor = 0;
-            int goalsAgainst = 0;
-
-            foreach (var match in Matches)
-            {
-                if (match.HomeTeamID == teamId)
-                {
-                    goalsFor += match.HomeScore;
-                    goalsAgainst += match.AwayScore;
-                }
-                else if (match.AwayTeamID == teamId)
-                {
-                    goalsFor += match.AwayScore;
-                    goalsAgainst += match.HomeScore;
-                }
-            }
-
-            return goalsFor - goalsAgainst;
-        }
-
-        public int GetGoalsForTeam(int teamId)
-        {
-            int goalsFor = 0;
-
-            foreach (var match in Matches)
-            {
-                if (match.HomeTeamID == teamId)
-                {
-                    goalsFor += match.HomeScore;
-                }
-                else if (match.AwayTeamID == teamId)
-                {
-                    goalsFor += match.AwayScore;
-                }
-            }
-
-            return goalsFor;
-        }
-    }
-
+    // Les DTOs LeagueStandingEntry, HeadToHeadRecord, PlayerSeasonStats, HeadToHeadResult sont désormais dans HandballManager.Data
+    // Toute déclaration ou implémentation locale de ces classes/structs doit être supprimée.
+    // Les références doivent pointer vers HandballManager.Data.LeagueStandingEntry, etc.
+    
     /// <summary>
     /// Manages league standings, processes results, and handles season finalization.
     /// </summary>
@@ -215,18 +36,17 @@ namespace HandballManager.Management
         /// Processes a match result, updating the relevant league table and player statistics.
         /// </summary>
         /// <param name="result">The completed match result.</param>
-        public void ProcessMatchResult(MatchResult result)
+        public void ProcessMatchResult(MatchResult result, IEnumerable<TeamData> allTeams)
         {
             // Determine the league ID for this match from the home team
             int leagueId = 1; // Default to league 1 if not found
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            var homeTeam = gameManager?.AllTeams.FirstOrDefault(t => t.TeamID == result.HomeTeamID);
+            var homeTeam = allTeams.FirstOrDefault(t => t.TeamID == result.HomeTeamID);
             if (homeTeam != null) leagueId = homeTeam.LeagueID ?? 1;
 
             // Initialize league table if it doesn't exist
             if (!_leagueTables.ContainsKey(leagueId))
             {
-                InitializeLeagueTable(leagueId);
+                InitializeLeagueTable(leagueId, allTeams);
             }
 
             List<LeagueStandingEntry> table = _leagueTables[leagueId];
@@ -238,7 +58,7 @@ namespace HandballManager.Management
             if (homeEntry == null || awayEntry == null)
             {
                 Debug.LogWarning($"[LeagueManager] Could not find team entries in league table {leagueId} for match: {result}. Re-initializing table.");
-                InitializeLeagueTable(leagueId, true); // Force re-init
+                InitializeLeagueTable(leagueId, allTeams, true); // Force re-init
                 table = _leagueTables[leagueId]; // Get the updated table
                 homeEntry = table.FirstOrDefault(e => e.TeamID == result.HomeTeamID);
                 awayEntry = table.FirstOrDefault(e => e.TeamID == result.AwayTeamID);
@@ -278,7 +98,7 @@ namespace HandballManager.Management
             UpdateHeadToHeadRecords(homeEntry, awayEntry, result);
 
             // Track player statistics
-            TrackPlayerStats(result, leagueId);
+            TrackPlayerStats(result, leagueId, allTeams);
 
             // Store head-to-head result for tiebreaking
             StoreHeadToHeadResult(result, leagueId);
@@ -540,7 +360,7 @@ namespace HandballManager.Management
         /// <summary>
         /// Performs end-of-season processing including awarding titles, promotions, and relegations.
         /// </summary>
-        public void FinalizeSeason()
+        public void FinalizeSeason(IEnumerable<TeamData> allTeams)
         {
             Debug.Log("[LeagueManager] Finalizing season...");
 
@@ -555,19 +375,18 @@ namespace HandballManager.Management
 
                 // Announce league winner
                 string winner = table[0].TeamName;
-                int winnerId = table[0].TeamID;
-                Debug.Log($"League {leagueId} Winner: {winner} (ID: {winnerId})");
+                Debug.Log($"[LeagueManager] League {leagueId} winner: {winner}");
 
                 // Handle promotion (except from top league)
                 if (leagueId > 1 && table.Count >= PROMOTION_SPOTS)
                 {
-                    HandlePromotions(leagueId, table);
+                    HandlePromotions(leagueId, table, allTeams);
                 }
 
                 // Handle relegation (except from bottom league)
                 if (leagueId < leagueIds.Max() && table.Count >= RELEGATION_SPOTS)
                 {
-                    HandleRelegations(leagueId, table);
+                    HandleRelegations(leagueId, table, allTeams);
                 }
             }
 
@@ -583,11 +402,10 @@ namespace HandballManager.Management
         /// <summary>
         /// Handles promotion of teams from a league to the division above
         /// </summary>
-        private void HandlePromotions(int leagueId, List<LeagueStandingEntry> table)
+        private void HandlePromotions(int leagueId, List<LeagueStandingEntry> table, IEnumerable<TeamData> allTeams)
         {
             int targetLeagueId = leagueId - 1; // Promote to the league above (lower number)
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager == null) return;
+            if (allTeams == null) return;
 
             Debug.Log($"[LeagueManager] Processing promotions from League {leagueId} to League {targetLeagueId}");
 
@@ -597,8 +415,8 @@ namespace HandballManager.Management
                 int teamId = table[i].TeamID;
                 string teamName = table[i].TeamName;
 
-                // Find the team in the game manager
-                var team = gameManager.AllTeams.FirstOrDefault(t => t.TeamID == teamId);
+                // Find the team in the provided list
+                var team = allTeams.FirstOrDefault(t => t.TeamID == teamId);
                 if (team != null)
                 {
                     // Update the team's league ID
@@ -615,11 +433,10 @@ namespace HandballManager.Management
         /// <summary>
         /// Handles relegation of teams from a league to the division below
         /// </summary>
-        private void HandleRelegations(int leagueId, List<LeagueStandingEntry> table)
+        private void HandleRelegations(int leagueId, List<LeagueStandingEntry> table, IEnumerable<TeamData> allTeams)
         {
             int targetLeagueId = leagueId + 1; // Relegate to the league below (higher number)
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager == null) return;
+            if (allTeams == null) return;
 
             Debug.Log($"[LeagueManager] Processing relegations from League {leagueId} to League {targetLeagueId}");
 
@@ -630,8 +447,8 @@ namespace HandballManager.Management
                 int teamId = table[tableSize - 1 - i].TeamID;
                 string teamName = table[tableSize - 1 - i].TeamName;
 
-                // Find the team in the game manager
-                var team = gameManager.AllTeams.FirstOrDefault(t => t.TeamID == teamId);
+                // Find the team in the provided list
+                var team = allTeams.FirstOrDefault(t => t.TeamID == teamId);
                 if (team != null)
                 {
                     // Update the team's league ID
@@ -738,7 +555,7 @@ namespace HandballManager.Management
         /// <summary>
         /// Tracks player statistics from a match result
         /// </summary>
-        private void TrackPlayerStats(MatchResult result, int leagueId)
+        private void TrackPlayerStats(MatchResult result, int leagueId, IEnumerable<TeamData> allTeams)
         {
             // Initialize player stats dictionary for this league if needed
             if (!_playerStats.ContainsKey(leagueId))
@@ -746,12 +563,11 @@ namespace HandballManager.Management
                 _playerStats[leagueId] = new List<PlayerSeasonStats>();
             }
 
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager == null) return;
+            if (allTeams == null) return;
 
             // Get the teams
-            var homeTeam = gameManager.AllTeams.FirstOrDefault(t => t.TeamID == result.HomeTeamID);
-            var awayTeam = gameManager.AllTeams.FirstOrDefault(t => t.TeamID == result.AwayTeamID);
+            var homeTeam = allTeams.FirstOrDefault(t => t.TeamID == result.HomeTeamID);
+            var awayTeam = allTeams.FirstOrDefault(t => t.TeamID == result.AwayTeamID);
             if (homeTeam == null || awayTeam == null) return;
 
             // TODO: When player match stats are added to MatchResult, process them here
@@ -765,7 +581,7 @@ namespace HandballManager.Management
                 foreach (var playerStat in result.PlayerStats.Values)
                 {
                     // Find the player in our season stats
-                    var player = gameManager.AllPlayers.FirstOrDefault(p => p.PlayerID == playerStat.PlayerID);
+                    var player = allTeams.FirstOrDefault(p => p.PlayerID == playerStat.PlayerID);
                     if (player == null) continue;
                     
                     // Find or create season stats for this player
@@ -797,14 +613,13 @@ namespace HandballManager.Management
         /// </summary>
         /// <param name="leagueId">The ID of the league table to retrieve.</param>
         /// <returns>The list of standing entries, or null if not found.</returns>
-        public List<LeagueStandingEntry> GetLeagueTableForUI(int leagueId)
+        public List<LeagueStandingEntry> GetLeagueTableForUI(int leagueId, IEnumerable<TeamData> allTeams)
         {
-            // Debug.Log($"[LeagueManager] Placeholder: Providing league table {leagueId} for UI.");
             _leagueTables.TryGetValue(leagueId, out var table);
             if (table == null && leagueId > 0)
             {
                 Debug.LogWarning($"[LeagueManager] UI requested table for league {leagueId}, but it doesn't exist yet. Initializing.");
-                InitializeLeagueTable(leagueId);
+                InitializeLeagueTable(leagueId, allTeams);
                 _leagueTables.TryGetValue(leagueId, out table);
             }
             return table; // Return the current state (might not be sorted if called mid-week)
@@ -813,21 +628,21 @@ namespace HandballManager.Management
         /// <summary>
         /// Initializes the league table structure for a given league ID based on teams in GameManager.
         /// </summary>
-        public void InitializeLeagueTable(int leagueId, bool forceReinit = false)
+        public void InitializeLeagueTable(int leagueId, IEnumerable<TeamData> allTeams, bool forceReinit = false)
         {
             if (_leagueTables.ContainsKey(leagueId) && !forceReinit) return; // Already exists
 
             Debug.Log($"[LeagueManager] Initializing league table for LeagueID: {leagueId}");
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager == null || gameManager.AllTeams == null)
+            if (allTeams == null)
             {
-                Debug.LogError("[LeagueManager] Cannot initialize league table - GameManager or Team List not available.");
+                Debug.LogWarning($"[LeagueManager] Cannot initialize league table: teams not available.");
+                _leagueTables[leagueId] = new List<LeagueStandingEntry>();
                 return;
             }
 
-            List<LeagueStandingEntry> newTable = new List<LeagueStandingEntry>();
-            List<TeamData> teamsInLeague = gameManager.AllTeams.Where(t => t.LeagueID == leagueId).ToList();
+            var teamsInLeague = allTeams.Where(t => t.LeagueID == leagueId).ToList();
 
+            List<LeagueStandingEntry> newTable = new List<LeagueStandingEntry>();
             foreach (var team in teamsInLeague)
             {
                 // Avoid adding duplicates if re-initializing

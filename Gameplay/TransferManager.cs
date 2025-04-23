@@ -30,7 +30,7 @@ namespace HandballManager.Gameplay
         /// <param name="player">The player being bid on.</param>
         /// <param name="offerAmount">The transfer fee offered.</param>
         /// <returns>A transfer ID if the offer was successfully logged/initiated, -1 otherwise.</returns>
-        public int MakeOffer(TeamData buyingTeam, TeamData sellingTeam, PlayerData player, float offerAmount)
+        public int MakeOffer(TeamData buyingTeam, TeamData sellingTeam, PlayerData player, float offerAmount, DateTime currentDate)
         {
             if (buyingTeam == null || sellingTeam == null || player == null)
             {
@@ -67,7 +67,7 @@ namespace HandballManager.Gameplay
                 SellingTeamID = sellingTeam.TeamID,
                 PlayerID = player.PlayerID,
                 OfferAmount = offerAmount,
-                OfferDate = Core.GameManager.Instance.TimeManager.CurrentDate,
+                OfferDate = currentDate,
                 Status = OfferStatus.Pending // Initial status
             };
 
@@ -91,7 +91,7 @@ namespace HandballManager.Gameplay
         /// <param name="offerID">Identifier for the specific transfer offer.</param>
         /// <param name="response">The response type (Accepted, Rejected, Negotiate).</param>
         /// <param name="negotiationFee">Optional: A counter-offer fee if response is Negotiate.</param>
-        public void RespondToOffer(int offerID, OfferResponse response, float negotiationFee = 0)
+        public void RespondToOffer(int offerID, OfferResponse response, DateTime currentDate, IEnumerable<TeamData> allTeams, IEnumerable<PlayerData> allPlayers, ContractManager contractManager, float negotiationFee = 0)
         {
              if (!_activeOffers.ContainsKey(offerID))
              {
@@ -119,11 +119,31 @@ namespace HandballManager.Gameplay
                  case OfferResponse.Accepted:
                      offer.Status = OfferStatus.AcceptedByClub;
                      Debug.Log($" -- Offer {offerID} accepted by selling club. Initiating contract talks with player {offer.PlayerID}.");
-                     // Now, the buying team needs to negotiate a contract with the player.
-                     // This should trigger the ContractManager.
-                     // TODO: Initiate ContractManager.OfferContract from buying team to player.
-                     // Need to retrieve TeamData and PlayerData objects based on IDs stored in the offer.
-                     // Example: ContractManager.OfferContract(buyingTeamData, playerData, ...);
+                     // Retrieve TeamData and PlayerData objects based on IDs stored in the offer.
+                     TeamData buyingTeamData = allTeams?.FirstOrDefault(t => t.TeamID == offer.BuyingTeamID);
+                     PlayerData playerData = allPlayers?.FirstOrDefault(p => p.PlayerID == offer.PlayerID);
+                     if (buyingTeamData == null)
+                     {
+                         Debug.LogError($"[TransferManager] Buying team not found for TeamID: {offer.BuyingTeamID}");
+                         break;
+                     }
+                     if (playerData == null)
+                     {
+                         Debug.LogError($"[TransferManager] Player not found for PlayerID: {offer.PlayerID}");
+                         break;
+                     }
+                     // Example contract terms - these should be determined by negotiation UI/logic
+                     float proposedWage = playerData.GetExpectedWage();
+                     int contractYears = 2;
+                     float signingBonus = 0f;
+                     float agentFee = 0f;
+                     // Call ContractManager.OfferContract
+                     if (contractManager == null)
+                     {
+                         Debug.LogError("[TransferManager] ContractManager instance not found.");
+                         break;
+                     }
+                     contractManager.OfferContract(buyingTeamData, playerData, proposedWage, contractYears, currentDate, signingBonus, agentFee);
                      break;
 
                  case OfferResponse.Rejected:
@@ -146,7 +166,7 @@ namespace HandballManager.Gameplay
         /// Called by ContractManager (or GameManager) once a player agrees to personal terms for a transfer.
         /// </summary>
         /// <param name="offerID">The ID of the transfer offer that led to the contract.</param>
-         public void FinalizeTransfer(int offerID)
+         public void FinalizeTransfer(int offerID, IEnumerable<TeamData> allTeams, IEnumerable<PlayerData> allPlayers)
          {
              if (!_activeOffers.ContainsKey(offerID))
              {
@@ -166,20 +186,10 @@ namespace HandballManager.Gameplay
              offer.Status = OfferStatus.Completed;
 
 
-             // TODO: Retrieve actual TeamData and PlayerData objects from a central store/database using IDs.
-             // This requires access to the main game data repository.
-             // Example placeholder access (replace with real data access):
-             // PlayerData player = DatabaseManager.GetPlayerById(offer.PlayerID);
-             // TeamData buyingTeam = DatabaseManager.GetTeamById(offer.BuyingTeamID);
-             // TeamData sellingTeam = DatabaseManager.GetTeamById(offer.SellingTeamID);
-
-             // --- Placeholder Data Modification (Simulate finding data - Requires GameManager or DB access) ---
-             PlayerData player = Core.GameManager.Instance.PlayerTeam?.Roster.FirstOrDefault(p => p.PlayerID == offer.PlayerID); // Find player on Player's team (if selling)
-             // This is flawed - needs a global player list! Using dummy data for now.
-             if (player == null) player = new PlayerData { PlayerID = offer.PlayerID, KnownAs = "Unknown Player" }; // Dummy
-             TeamData buyingTeam = (Core.GameManager.Instance.PlayerTeam?.TeamID == offer.BuyingTeamID) ? Core.GameManager.Instance.PlayerTeam : new TeamData { TeamID = offer.BuyingTeamID, Name = "Buying Team", Budget = 10000000 }; // Dummy or PlayerTeam
-             TeamData sellingTeam = (Core.GameManager.Instance.PlayerTeam?.TeamID == offer.SellingTeamID) ? Core.GameManager.Instance.PlayerTeam : new TeamData { TeamID = offer.SellingTeamID, Name = "Selling Team", Budget = 500000 }; // Dummy or PlayerTeam
-             // --- End Placeholder Data ---
+             // Retrieve actual TeamData and PlayerData objects from provided lists
+            PlayerData player = allPlayers?.FirstOrDefault(p => p.PlayerID == offer.PlayerID);
+            TeamData buyingTeam = allTeams?.FirstOrDefault(t => t.TeamID == offer.BuyingTeamID);
+            TeamData sellingTeam = allTeams?.FirstOrDefault(t => t.TeamID == offer.SellingTeamID);
 
 
              if (player == null || buyingTeam == null || sellingTeam == null) {
@@ -226,7 +236,7 @@ namespace HandballManager.Gameplay
         /// PLACEHOLDER IMPLEMENTATION.
         /// </summary>
         /// <returns>A list of players potentially available.</returns>
-        public List<PlayerData> GetTransferList()
+        public List<PlayerData> GetTransferList(TeamData playerTeam)
         {
             Debug.Log("[TransferManager Placeholder] Getting transfer list...");
 
@@ -241,9 +251,9 @@ namespace HandballManager.Gameplay
             // 3. Return the filtered list.
 
             // Placeholder: Return first few players from player's team for testing UI
-             if (Core.GameManager.Instance?.PlayerTeam?.Roster != null)
+             if (playerTeam?.Roster != null)
              {
-                 return Core.GameManager.Instance.PlayerTeam.Roster.Take(5).ToList();
+                 return playerTeam.Roster.Take(5).ToList();
              }
 
             return new List<PlayerData>(); // Return empty list if no data access

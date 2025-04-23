@@ -63,8 +63,8 @@ namespace HandballManager.Simulation.Events.Calculators
             const float PASSIVE_BLOCK_PROB = 0.10f; // base passive block chance
             const float PASSIVE_BLOCK_EFFECTIVENESS = 0.3f;
 
-            List<(SimPlayer, float, bool, bool, float, BlockTimingCategory, bool)> blockAttempts = new List<(SimPlayer, float, bool, bool, float, BlockTimingCategory, bool)>();
-            List<(SimPlayer, float)> passiveAttempts = new List<(SimPlayer, float)>();
+            List<(SimPlayer, float, bool, bool, float, BlockTimingCategory, bool)> blockAttempts = new();
+            List<(SimPlayer, float)> passiveAttempts = new();
 
             float now = Time.time;
             // --- Active Blockers (Standing & Jumping) ---
@@ -76,7 +76,7 @@ namespace HandballManager.Simulation.Events.Calculators
                 if (defender.CurrentAction != PlayerAction.AttemptingBlock)
                     continue;
                 Vector2 defenderPos2D = defender.Position;
-                Vector2 shotOrigin2D = new Vector2(shotOrigin.x, shotOrigin.z);
+                Vector2 shotOrigin2D = new(shotOrigin.x, shotOrigin.z);
                 float dist = Vector2.Distance(defenderPos2D, shotOrigin2D);
                 // --- Active block: must be within cone and radius ---
                 if (dist > BLOCK_RADIUS)
@@ -135,7 +135,7 @@ namespace HandballManager.Simulation.Events.Calculators
                 if (defender == null || defender.BaseData == null || defender.BaseData.CurrentInjuryStatus != InjuryStatus.Healthy)
                     continue;
                 Vector2 defenderPos2D = defender.Position;
-                Vector2 shotOrigin2D = new Vector2(shotOrigin.x, shotOrigin.z);
+                Vector2 shotOrigin2D = new(shotOrigin.x, shotOrigin.z);
                 float dist = Vector2.Distance(defenderPos2D, shotOrigin2D);
                 if (dist > PASSIVE_BLOCK_RADIUS)
                     continue;
@@ -168,10 +168,10 @@ namespace HandballManager.Simulation.Events.Calculators
             bool isBlocked = roll < finalBlockProb * EFFECTIVENESS_FULL_BLOCK;
             bool isPartial = !isBlocked && roll < finalBlockProb;
             // Determine which defender succeeded (weighted random by effectiveness)
-            BlockResult result = new BlockResult { Blocked = false, Partial = false, Effectiveness = 0f, Timing = BlockTimingCategory.None, Reason = "No block attempt" };
+            BlockResult result = new() { Blocked = false, Partial = false, Effectiveness = 0f, Timing = BlockTimingCategory.None, Reason = "No block attempt" };
             if (isBlocked || isPartial)
             {
-                System.Random rng = new System.Random();
+                System.Random rng = new();
                 // Active block: pick highest effectiveness or weighted
                 if (blockAttempts.Count > 0)
                 {

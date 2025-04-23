@@ -1,0 +1,17 @@
+{
+    "name": "HandballManager.Gameplay",
+    "rootNamespace": "",
+    "references": [
+        "GUID:47605065c65db0e46bdad3b03c04de7b",
+        "GUID:b91ac63fafb315a498f112a900c49c63"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

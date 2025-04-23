@@ -69,7 +69,7 @@ namespace HandballManager.Simulation
         /// </summary>
         /// <param name="team">The team whose players' morale to update.</param>
         /// <param name="result">The result of the match the team participated in.</param>
-        public void UpdateMoralePostMatch(TeamData team, MatchResult result)
+        public void UpdateMoralePostMatch(TeamData team, MatchResult result, DateTime currentDate, IEnumerable<TeamData> allTeams)
         {
             if (team == null || team.Roster == null || result == null) return;
 
@@ -77,7 +77,7 @@ namespace HandballManager.Simulation
             MatchOutcome outcome = result.GetOutcomeForTeam(team.TeamID);
 
             // Determine Expected Outcome (Simple version based on Reputation)
-            TeamData opponent = GetOpponentTeamData(result, team.TeamID); // Helper to get opponent data
+            TeamData opponent = GetOpponentTeamData(result, team.TeamID, allTeams); // Helper to get opponent data
             MatchOutcome expectedOutcome = PredictOutcome(team, opponent);
 
             float baseMoraleChange = 0f;
@@ -116,7 +116,7 @@ namespace HandballManager.Simulation
 
                  // --- Participation Modifier ---
                  // TODO: Needs actual match participation data. Using injury as a proxy.
-                 bool participated = !player.IsInjured(); // Simple proxy: Assume non-injured played
+                 bool participated = !player.IsInjured(currentDate); // Simple proxy: Assume non-injured played
                  if (!participated) {
                      playerSpecificChange *= NON_PARTICIPANT_MOD;
                  }
@@ -144,7 +144,7 @@ namespace HandballManager.Simulation
         /// Performs weekly updates to player morale (decay, training, league position, contract/transfer status, form).
         /// </summary>
         /// <param name="team">The team whose players' morale to update.</param>
-        public void UpdateMoraleWeekly(TeamData team)
+        public void UpdateMoraleWeekly(TeamData team, DateTime currentDate, LeagueManager leagueManager)
         {
              if (team == null || team.Roster == null) return;
              // Only log occasionally to avoid spam
@@ -154,9 +154,6 @@ namespace HandballManager.Simulation
              int teamPosition = DEFAULT_TEAM_POSITION;
              int leagueSize = DEFAULT_LEAGUE_SIZE;
              bool leagueInfoAvailable = false;
-             // TODO: Replace placeholder LeagueManager call with actual implementation
-             // In a real scenario, LeagueManager might be accessed via GameManager.Instance
-             var leagueManager = GameManager.Instance?.LeagueManager; // Example access
              if(leagueManager != null && team.LeagueID.HasValue) {
                  // Placeholder method - replace with actual LeagueManager method signature
                  (teamPosition, leagueSize) = GetTeamPositionAndSizePlaceholder(leagueManager, team.LeagueID.Value, team.TeamID);
@@ -196,7 +193,7 @@ namespace HandballManager.Simulation
                  weeklyChange += formModifier;
 
                  // 5. Contract situation checks
-                 if (player.ContractExpiryDate != DateTime.MinValue && player.ContractExpiryDate < GameManager.Instance.TimeManager.CurrentDate.AddMonths(6)) {
+                 if (player.ContractExpiryDate != DateTime.MinValue && player.ContractExpiryDate < currentDate.AddMonths(6)) {
                      // If contract expiring soon AND morale is low AND not explicitly unavailable, decrease morale
                      if (player.Morale < 0.4f && player.TransferStatus != TransferStatus.Unavailable) {
                           weeklyChange += LOW_MORALE_EXPIRING_CONTRACT_DROP;
@@ -300,11 +297,11 @@ namespace HandballManager.Simulation
         }
 
          /// <summary>Placeholder: Gets the opponent's TeamData from a MatchResult.</summary>
-        private TeamData GetOpponentTeamData(MatchResult result, int perspectiveTeamID)
+        private TeamData GetOpponentTeamData(MatchResult result, int perspectiveTeamID, IEnumerable<TeamData> allTeams)
         {
              int opponentID = (result.HomeTeamID == perspectiveTeamID) ? result.AwayTeamID : result.HomeTeamID;
              // TODO: Replace with actual lookup from a DatabaseManager or GameManager list
-             TeamData opponent = GameManager.Instance?.AllTeams?.FirstOrDefault(t => t.TeamID == opponentID);
+             TeamData opponent = allTeams?.FirstOrDefault(t => t.TeamID == opponentID);
              if (opponent != null) return opponent;
 
              // Placeholder fallback (creates dummy data)

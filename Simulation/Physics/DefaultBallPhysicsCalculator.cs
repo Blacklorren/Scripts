@@ -2,6 +2,7 @@ using UnityEngine;
 using System;
 using HandballManager.Simulation.Utils;
 using HandballManager.Simulation.Engines;
+using HandballManager.Core;
 
 namespace HandballManager.Simulation.Physics
 {
@@ -79,8 +80,11 @@ namespace HandballManager.Simulation.Physics
                     }
                     ball.AngularVelocity *= Mathf.Pow(SimConstants.SPIN_DECAY_FACTOR, deltaTime);
                     Vector3 acceleration = force / SimConstants.BALL_MASS;
-                    ball.Velocity += acceleration * deltaTime;
-                    ball.Position += ball.Velocity * deltaTime;
+
+                    // RK2 integration for ball flight
+                    Vector3 midVel = ball.Velocity + 0.5f * acceleration * MatchSimulator.TIME_STEP_SECONDS;
+                    ball.Position += midVel * MatchSimulator.TIME_STEP_SECONDS;
+                    ball.Velocity += acceleration * MatchSimulator.TIME_STEP_SECONDS;
 
                     if (ball.Position.y <= SimConstants.BALL_RADIUS)
                     {
@@ -344,12 +348,13 @@ namespace HandballManager.Simulation.Physics
     }
 
     /// <summary>
-    /// Projects the ball's 3D position forward in time, considering physics
+    /// Projects the ball's 3D position forward in time, considering physics using RK2 integration.
     /// </summary>
     /// <param name="startPos">The starting 3D position</param>
     /// <param name="velocity">The initial 3D velocity</param>
     /// <param name="time">The time duration to project forward</param>
     /// <returns>The estimated 3D position after the specified time</returns>
+    /// <remarks>Uses RK2 integration and MatchSimulator.TIME_STEP_SECONDS as the simulation time step.</remarks>
     public Vector3 ProjectBallPosition(Vector3 startPos, Vector3 velocity, float time)
     {
         if (time <= 0f || float.IsNaN(time) ||
@@ -359,19 +364,19 @@ namespace HandballManager.Simulation.Physics
 
         try
         {
-            // Include air resistance in the calculation
             float dragCoefficient = SimConstants.DRAG_COEFFICIENT * SimConstants.AIR_DENSITY;
             Vector3 velocityStep = velocity;
             Vector3 position = startPos;
-            float timeStep = 0.016f; // ~60fps simulation steps
+            float timeStep = MatchSimulator.TIME_STEP_SECONDS;
 
             for (float t = 0; t < time; t += timeStep)
             {
-                float stepTime = Mathf.Min(timeStep, time - t);
+                float dt = Mathf.Min(timeStep, time - t);
                 Vector3 drag = -velocityStep.normalized * velocityStep.sqrMagnitude * dragCoefficient;
-                Vector3 acceleration = _gravity + drag / SimConstants.BALL_MASS; // Use cached _gravity
-                velocityStep += acceleration * stepTime;
-                position += velocityStep * stepTime;
+                Vector3 acceleration = _gravity + drag / SimConstants.BALL_MASS;
+                Vector3 midVel = velocityStep + 0.5f * acceleration * dt;
+                position += midVel * dt;
+                velocityStep += acceleration * dt;
             }
 
             return position;

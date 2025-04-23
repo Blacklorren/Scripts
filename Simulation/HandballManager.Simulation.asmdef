@@ -1,0 +1,20 @@
+{
+    "name": "HandballManager.Simulation",
+    "rootNamespace": "",
+    "references": [
+        "GUID:47605065c65db0e46bdad3b03c04de7b",
+        "GUID:b91ac63fafb315a498f112a900c49c63",
+        "GUID:e2c4c21ea8b4899459523ff8d385ad6b",
+        "GUID:0d8beb7f090555447a6cf5ce9e54dbb4",
+        "GUID:8cf18d3c285dcc6408b94d52b866133b"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

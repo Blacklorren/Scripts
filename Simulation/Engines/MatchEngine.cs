@@ -3,6 +3,7 @@ using HandballManager.Data;
 using HandballManager.Gameplay;
 using CoreLogger = HandballManager.Core.Logging.ILogger;
 using HandballManager.Core.Time;
+using System.Collections.Generic;
 
 #endregion
 
@@ -197,7 +198,7 @@ namespace HandballManager.Simulation.Engines
                 _logger.LogInformation($"Starting simulation core: {homeTeamName} vs {awayTeamName}");
 
                 // Run the simulation with current date
-                DateTime matchDate = _timeProvider.CurrentDate;
+                DateTime matchDate = _timeProvider.CurrentDate; // _timeProvider must be injected, not global
                 result = matchSimulator.SimulateMatch(matchDate);
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -236,14 +237,13 @@ namespace HandballManager.Simulation.Engines
         
         private MatchResult CreateErrorResult(string reason) { 
             _logger.LogError($"Match simulation error: {reason}");
-            return new MatchResult(-1, -2, "Error", "Error") { 
+            return new MatchResult(-1, -2, "Error", "Error", _timeProvider.CurrentDate) { 
                 ErrorMessage = reason 
             }; 
         }
-        
+
         /// <summary>
         /// Creates an error result with team context preserved.
-        /// </summary>
         /// <param name="home">Home team data.</param>
         /// <param name="away">Away team data.</param>
         /// <param name="reason">The error reason.</param>
@@ -254,7 +254,8 @@ namespace HandballManager.Simulation.Engines
                 -1, 
                 -2, 
                 home?.Name ?? "Invalid Home", 
-                away?.Name ?? "Invalid Away"
+                away?.Name ?? "Invalid Away",
+                _timeProvider.CurrentDate
             ) { 
                 ErrorMessage = reason,
                 IsAborted = true
@@ -263,7 +264,6 @@ namespace HandballManager.Simulation.Engines
 
         /// <summary>
         /// Asynchronously simulates a complete handball match between two teams.
-        /// </summary>
         /// <param name="homeTeam">The home team data.</param>
         /// <param name="awayTeam">The away team data.</param>
         /// <param name="homeTactic">The tactic for the home team.</param>
@@ -352,17 +352,101 @@ namespace HandballManager.Simulation.Engines
         {
             if (_lastMatchResult != null)
                 return _lastMatchResult;
-            // Fallback: create a result from the current state if match not complete
+            // Always provide the match date from the injected time provider
+            var matchDate = _timeProvider != null ? _timeProvider.CurrentDate : DateTime.Now.Date; // _timeProvider must be injected, not global
             return new MatchResult(
-                _currentMatchState?.HomeScore ?? -1,
-                _currentMatchState?.AwayScore ?? -1,
-                _currentMatchState?.HomeTeamData?.Name ?? "Home",
-                _currentMatchState?.AwayTeamData?.Name ?? "Away"
-            )
+    _currentMatchState?.HomeScore ?? -1,
+    _currentMatchState?.AwayScore ?? -1,
+    _currentMatchState?.HomeTeamData?.Name ?? "Home",
+    _currentMatchState?.AwayTeamData?.Name ?? "Away",
+    matchDate
+)
+{
+    MatchEvents = _currentMatchState?.MatchEvents?.Select(e => ToMatchEventDto(e)).ToList() ?? new List<MatchEventDto>(),
+    FinalMatchSnapshot = _currentMatchState != null ? CreateSnapshotDto(_currentMatchState) : null
+};
+        }
+
+        /// <summary>
+        /// Converts a MatchEvent to a MatchEventDto for result serialization.
+        /// </summary>
+        private MatchEventDto ToMatchEventDto(MatchEvent e)
+        {
+            return new MatchEventDto
             {
-                MatchEvents = _currentMatchState?.MatchEvents,
-                FinalMatchState = _currentMatchState
+                Time = e.TimeSeconds,
+                EventType = null, // No direct mapping; set to null or infer if needed
+                Description = e.Description,
+                PlayerId = e.PlayerId,
+                TeamId = e.TeamId
             };
+        }
+
+        /// <summary>
+        /// Creates a serializable DTO snapshot of the final match state.
+        /// </summary>
+        private MatchSnapshotDto CreateSnapshotDto(MatchState state)
+        {
+            var snapshot = new MatchSnapshotDto();
+
+            // --- Players ---
+            foreach (var simPlayer in state.AllPlayers.Values)
+            {
+                var baseData = simPlayer.BaseData;
+                var playerDto = new PlayerSnapshotDto
+                {
+                    PlayerId = baseData?.PlayerID ?? -1,
+                    TeamSimId = simPlayer.TeamSimId,
+                    PlayerName = baseData?.FullName ?? "Unknown",
+                    Nationality = baseData?.Nationality ?? "Unknown",
+                    Age = baseData?.Age ?? 0,
+                    AssignedTacticalRole = simPlayer.AssignedTacticalRole.ToString(),
+                    PrimaryPosition = baseData?.PrimaryPosition.ToString() ?? "Unknown",
+                    Position = simPlayer.Position,
+                    Velocity = simPlayer.Velocity,
+                    LookDirection = simPlayer.LookDirection,
+                    HasBall = simPlayer.HasBall,
+                    Stamina = simPlayer.Stamina,
+                    CurrentFatigue = simPlayer.CurrentFatigue,
+                    IsOnCourt = simPlayer.IsOnCourt,
+                    SuspensionTimer = simPlayer.SuspensionTimer,
+                    IsJumping = simPlayer.IsJumping,
+                    JumpActive = simPlayer.JumpActive,
+                    VerticalPosition = simPlayer.VerticalPosition,
+                    JumpTimer = simPlayer.JumpTimer,
+                    JumpInitialHeight = simPlayer.JumpInitialHeight,
+                    JumpStartVelocity = simPlayer.JumpStartVelocity,
+                    JumpOrigin = simPlayer.JumpOrigin,
+                    JumpOriginatedOutsideGoalArea = simPlayer.JumpOriginatedOutsideGoalArea,
+                    IsStumbling = simPlayer.IsStumbling,
+                    StumbleTimer = simPlayer.StumbleTimer,
+                    CurrentAction = simPlayer.CurrentAction.ToString(),
+                    PlannedAction = simPlayer.PlannedAction.ToString(),
+                    TargetPosition = simPlayer.TargetPosition,
+                    TargetPlayerId = simPlayer.TargetPlayer != null ? (int?)simPlayer.TargetPlayer.BaseData?.PlayerID : null,
+                    ActionTimer = simPlayer.ActionTimer,
+                    EffectiveSpeed = simPlayer.EffectiveSpeed
+                };
+                snapshot.Players.Add(playerDto);
+            }
+
+            // --- Ball ---
+            var simBall = state.Ball;
+            snapshot.BallPosition = simBall.Position;
+            snapshot.BallVelocity = simBall.Velocity;
+            snapshot.BallAngularVelocity = simBall.AngularVelocity;
+            snapshot.BallLastTouchedByTeamId = simBall.LastTouchedByTeamId;
+            snapshot.BallLastTouchedByPlayerId = simBall.LastTouchedByPlayer?.BaseData?.PlayerID;
+            snapshot.BallIsLoose = simBall.IsLoose;
+            snapshot.BallIsInFlight = simBall.IsInFlight;
+            snapshot.BallIsRolling = simBall.IsRolling;
+            snapshot.BallHolderPlayerId = simBall.Holder?.BaseData?.PlayerID;
+            snapshot.BallPasserPlayerId = simBall.Passer?.BaseData?.PlayerID;
+            snapshot.BallIntendedTargetPlayerId = simBall.IntendedTarget?.BaseData?.PlayerID;
+            snapshot.BallPassOrigin = simBall.PassOrigin;
+            snapshot.BallLastShooterPlayerId = simBall.LastShooter?.BaseData?.PlayerID;
+
+            return snapshot;
         }
 
     }

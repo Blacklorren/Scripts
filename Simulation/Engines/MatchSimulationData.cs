@@ -314,10 +314,71 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
     /// </summary>
     public class SimPlayer
     {
+        // --- Jump Recovery State ---
+        private bool isRecoveringFromJump = false;
+        private float jumpRecoveryTimer = 0f;
+        /// <summary>
+        /// True if the player is currently recovering from a jump landing.
+        /// </summary>
+        public bool IsRecoveringFromJump => isRecoveringFromJump;
+        /// <summary>
+        /// Remaining recovery time (seconds).
+        /// </summary>
+        public float JumpRecoveryTimer => jumpRecoveryTimer;
+        /// <summary>
+        /// Call to start the jump recovery state with a given duration.
+        /// </summary>
+        internal void StartJumpRecovery(float duration)
+        {
+            isRecoveringFromJump = true;
+            jumpRecoveryTimer = duration;
+        }
+        /// <summary>
+        /// Updates the jump recovery timer and clears recovery state when finished.
+        /// </summary>
+        internal void UpdateJumpRecovery(float deltaTime)
+        {
+            if (isRecoveringFromJump)
+            {
+                jumpRecoveryTimer -= deltaTime;
+                if (jumpRecoveryTimer <= 0f)
+                {
+                    isRecoveringFromJump = false;
+                }
+            }
+        }
+        /// <summary>
+        /// The player's current vertical (Y) position above the ground. 0 = on ground.
+        /// </summary>
         /// <summary>
         /// The player's current vertical (Y) position above the ground. 0 = on ground.
         /// </summary>
         public float VerticalPosition { get; set; } = 0f;
+
+        /// <summary>
+        /// The player's initial jump velocity (2D: x for horizontal, y for vertical component).
+        /// </summary>
+        public Vector2 JumpStartVelocity { get; set; }
+
+        /// <summary>
+        /// The time elapsed since jump started.
+        /// </summary>
+        public float JumpTimer { get; set; } = 0f;
+
+        /// <summary>
+        /// True if the player is currently in a jump.
+        /// </summary>
+        public bool JumpActive { get; set; } = false;
+
+        /// <summary>
+        /// The starting vertical height at the beginning of the jump.
+        /// </summary>
+        public float JumpInitialHeight { get; set; } = 0f;
+
+        /// <summary>
+        /// True if the player is currently jumping.
+        /// </summary>
+        public bool IsJumping { get; set; } = false;
         /// <summary>
         /// The direction the player is currently facing on the field (normalized 2D vector).
         /// By default, players look to the right (Vector2.right).
@@ -327,8 +388,7 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         /// <summary>
         /// True if the player is currently jumping (for block, shot, etc.).
         /// </summary>
-        public bool IsJumping { get; set; } = false;
-
+        
         // --- Jump Simulation Fields ---
         private float jumpTimer = 0f;
         private float jumpDuration = 0f;
@@ -336,42 +396,21 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         private bool jumpActive = false;
 
         /// <summary>
-        /// Starts a jump for this player with specified height and duration.
+        /// Marks the player as starting a jump. Actual jump physics handled by JumpSimulator.
         /// </summary>
-        public void StartJump(float height = -1f, float duration = -1f)
+        public void StartJump()
         {
-            // Use player Jumping attribute if available
-            float jumpAttribute = BaseData?.Jumping ?? SimConstants.PLAYER_DEFAULT_ATTRIBUTE_VALUE;
-            float jumpFactor = Mathf.Lerp(
-                SimConstants.JUMP_MIN_FACTOR,
-                SimConstants.JUMP_MAX_FACTOR,
-                jumpAttribute / 100f
-            );
-            jumpHeight = (height > 0f) ? height : SimConstants.BASE_JUMP_HEIGHT * jumpFactor;
-            jumpDuration = (duration > 0f) ? duration : SimConstants.BASE_JUMP_DURATION;
-            jumpTimer = 0f;
-            jumpActive = true;
+            JumpTimer = 0f;
+            JumpActive = true;
             IsJumping = true;
         }
 
         /// <summary>
-        /// Updates the jump state. Call this every frame with deltaTime.
+        /// No longer handles jump arc; handled by JumpSimulator. Only updates state if needed.
         /// </summary>
         public void UpdateJump(float deltaTime)
         {
-            if (!jumpActive) return;
-            jumpTimer += deltaTime;
-            float t = jumpTimer / jumpDuration;
-            if (t >= 1f)
-            {
-                // Landed
-                VerticalPosition = 0f;
-                jumpActive = false;
-                IsJumping = false;
-                return;
-            }
-            // Use a parabolic arc: y = h * 4 * t * (1 - t), t in [0,1]
-            VerticalPosition = jumpHeight * 4f * t * (1f - t);
+            // Placeholder for legacy calls. JumpSimulator handles jump arc and landing.
         }
     
         /// <summary>
@@ -435,9 +474,18 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         public bool IsOnCourt { get; set; } = false;
         /// <summary>Seconds remaining if player is serving a suspension.</summary>
         public float SuspensionTimer { get; set; } = 0f;
+
+        /// <summary>
+        /// True if the player is currently stumbling due to a collision or other effect.
+        /// </summary>
+        public bool IsStumbling { get; set; } = false;
+        /// <summary>
+        /// Timer tracking the remaining duration of the stumbling effect (in seconds).
+        /// </summary>
+        public float StumbleTimer { get; set; } = 0f;
+
         /// <summary>The player's current primary action/intent.</summary>
         public PlayerAction CurrentAction { get; set; } = PlayerAction.Idle;
-
         /// <summary>
         /// The next action the AI intends for this player, set before execution.
         /// Used for planning and intent tracking.

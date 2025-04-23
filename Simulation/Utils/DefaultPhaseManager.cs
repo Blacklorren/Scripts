@@ -233,7 +233,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
              } catch (Exception ex) { Debug.LogError($"Error placing players in formation for kickoff: {ex.Message}"); return false; }
 
              state.Ball.Stop(); state.Ball.Position = _geometry.Center;
-            state.Ball.MakeLoose(_geometry.Center, Vector3.zero, -1); // Utilise MakeLoose pour réinitialiser LastShooter
+            state.Ball.MakeLoose(_geometry.Center, Vector3.zero, -1); // Utilise MakeLoose pour rï¿½initialiser LastShooter
             state.Ball.ResetPassContext();
 
             SimPlayer startingPlayer = _playerSetupHandler.FindPlayerByPosition(state, state.GetTeamOnCourt(startingTeamId), PlayerPosition.CentreBack)

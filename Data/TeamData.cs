@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using HandballManager.Gameplay; // For Tactic
 using HandballManager.Core; // For Enums?
 using UnityEngine; // Required for Debug.Log, potentially Serializable
 using System; // For Serializable
@@ -20,7 +19,7 @@ namespace HandballManager.Data
         public int Reputation { get; set; } = 1000;
         public List<PlayerData> Roster { get; set; } = new List<PlayerData>();
         public List<StaffData> Staff { get; set; } = new List<StaffData>();
-        public List<Tactic> Tactics { get; set; } = new List<Tactic>(); // Store multiple tactics
+        public List<TacticData> Tactics { get; set; } = new List<TacticData>(); // Store multiple tactics
         public Guid? CurrentTacticID { get; set; } // ID of the currently selected tactic from the Tactics list
 
         // Financial Data
@@ -42,26 +41,26 @@ namespace HandballManager.Data
         /// Gets the currently active tactic from the Tactics list.
         /// Returns the first tactic if the ID is not found or not set.
         /// </summary>
-        public Tactic CurrentTactic
+        public TacticData CurrentTactic
         {
             get
             {
                 if (CurrentTacticID.HasValue && Tactics != null)
                 {
-                    Tactic foundTactic = Tactics.FirstOrDefault(t => t.TacticID == CurrentTacticID.Value);
+                    TacticData foundTactic = Tactics.FirstOrDefault(t => t.TacticID == CurrentTacticID.Value);
                     if (foundTactic != null) return foundTactic;
                 }
                 // Fallback: return first tactic or a new default one
-                return Tactics?.FirstOrDefault() ?? new Tactic();
+                return Tactics?.FirstOrDefault() ?? new TacticData();
             }
-            set // Allow setting by assigning a Tactic object; finds or adds it and sets the ID.
+            set // Allow setting by assigning a TacticData object; finds or adds it and sets the ID.
             {
                 if (value == null)
                 {
                     CurrentTacticID = null;
                     return;
                 }
-                if (Tactics == null) Tactics = new List<Tactic>();
+                if (Tactics == null) Tactics = new List<TacticData>();
 
                 // Check if this tactic (by ID) is already in the list
                 int index = Tactics.FindIndex(t => t.TacticID == value.TacticID);
@@ -84,13 +83,13 @@ namespace HandballManager.Data
             // Ensure there's at least one default tactic when a team is created
             if (Tactics == null || Tactics.Count == 0)
             {
-                 Tactics = new List<Tactic>();
-                 Tactic defaultTactic = new Tactic { TacticName = "Default Balanced" };
+                 Tactics = new List<TacticData>();
+                 TacticData defaultTactic = new TacticData { Name = "Default Balanced", TacticID = Guid.NewGuid() };
                  Tactics.Add(defaultTactic);
                  CurrentTacticID = defaultTactic.TacticID;
             }
              TeamID = GetNextUniqueID(); // Assign unique ID
-             if (ShortName == "DEF" && Name != "Default Team") // Basic auto short name
+             if (ShortName == "DEF" && Name != "Default Team")
              {
                  ShortName = Name.Length >= 3 ? Name.Substring(0, 3).ToUpper() : Name.ToUpper();
              }

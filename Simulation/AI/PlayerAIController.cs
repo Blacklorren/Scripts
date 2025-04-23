@@ -47,6 +47,20 @@ namespace HandballManager.Simulation.AI
         private const float DRIBBLING_RISK_ADJUSTMENT = 0.9f;
         private const float PASS_SAFETY_ADJUSTMENT = 0.9f; // Factor applied when dividing pass score by risk (>1 means less likely)
         private const float PASS_SAFETY_MIN_DIVISOR = 0.1f; // Minimum divisor for pass score adjustment
+
+        // --- Phase-specific Offensive Modifiers ---
+        // Transition (fast break) phase multipliers
+        private const float TRANSITION_DRIBBLE_MODIFIER = 1.3f; // Encourage direct dribbling
+        private const float TRANSITION_PASS_MODIFIER = 1.15f;    // Encourage direct forward passes
+        private const float TRANSITION_SHOOT_MODIFIER = 1.15f;   // Encourage quick shots
+        private const float TRANSITION_COMPLEX_PASS_MODIFIER = 0.8f; // Deprioritize complex passes
+        private const float TRANSITION_SCREEN_MODIFIER = 0.8f;   // Deprioritize screens during fast break
+        private const float TRANSITION_PREP_TIME_FACTOR = 0.85f; // Faster prep for shot/pass
+        private const float TRANSITION_ACTION_THRESHOLD_FACTOR = 0.85f; // Lower threshold to act quickly
+
+        // Positional attack phase multipliers
+        private const float POSITIONAL_SCREEN_MODIFIER = 1.15f;  // Encourage tactical screens
+        private const float POSITIONAL_FORMATION_PASS_MODIFIER = 1.1f; // Encourage formation-maintaining passes
         #endregion
 
         #region Dependencies (Injected)
@@ -353,6 +367,16 @@ namespace HandballManager.Simulation.AI
             // Added null checks for safety, though should be caught by DecidePlayerAction
             if (player?.BaseData == null || state == null || tactic == null) return;
 
+            // --- Phase-specific Score Modifiers ---
+            // These are applied after base score calculation and risk/personality modifiers
+            float phaseDribbleModifier = 1f;
+            float phasePassModifier = 1f;
+            float phaseShootModifier = 1f;
+            float phaseScreenModifier = 1f;
+            float phaseComplexPassModifier = 1f;
+            float prepTimeFactor = 1f;
+            float actionThresholdFactor = 1f;
+
             // If player doesn't have the ball, their offensive action is to get into position
             if (!hasBall)
             {
@@ -363,62 +387,91 @@ namespace HandballManager.Simulation.AI
             // --- Evaluate Screen Opportunities First ---
             var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
             var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
-            if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
-            {
-                // Use new ScreenDecisionData for screen positioning
-                if (screenOpportunity.Data is ScreenDecisionData screenData)
-                {
-                    player.TargetPlayer = screenData.User;
-                    player.TargetPosition = screenData.ScreenSpot;
-                }
-                else
-                {
-                    player.TargetPlayer = screenOpportunity.Data as SimPlayer;
-                }
-                player.PlannedAction = PlayerAction.SettingScreen;
-                SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state); // No prep time for screen (can adjust)
-                return;
-            }
+if (screenOpportunity != null)
+    screenOpportunity.Confidence *= phaseScreenModifier;
+if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
+{
+    // Use new ScreenDecisionData for screen positioning
+    if (screenOpportunity.Data is ScreenDecisionData screenData)
+    {
+        player.TargetPlayer = screenData.User;
+        player.TargetPosition = screenData.ScreenSpot;
+    }
+    else
+    {
+        player.TargetPlayer = screenOpportunity.Data as SimPlayer;
+    }
+    player.PlannedAction = PlayerAction.SettingScreen;
+    SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state); // No prep time for screen (can adjust)
+    return;
+}
 
             var useScreen = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.CanUseScreen(aiContext);
-            if (useScreen != null && useScreen.IsSuccessful && useScreen.Confidence > 0.5f)
-            {
-                // Defensive AI logic here (example: marking, blocking, positioning)
-                Vector2 markingTarget = Vector2.zero; // TODO: Replace with actual marking logic
-                bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.AttemptingBlock;
-                bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
-                var pitchGeometry = (_tacticPositioner as HandballManager.Simulation.AI.Positioning.TacticPositioner)?.Geometry as HandballManager.Simulation.Utils.PitchGeometryProvider;
-if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vector3(markingTarget.x, SimConstants.BALL_RADIUS, markingTarget.y), player.TeamSimId == 0))
-                {
-                    // Reroute around the 6m zone if not about to jump
-                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
-                }
-                // If the path to target crosses the 6m zone and not jumping, reroute
-                if (!willBeInAir && pitchGeometry.WouldCrossGoalArea(player.Position, markingTarget, player.TeamSimId))
-                {
-                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
-                }
-                // Use markingTarget for movement/positioning
+if (useScreen != null)
+    useScreen.Confidence *= phaseScreenModifier;
+if (useScreen != null && useScreen.IsSuccessful && useScreen.Confidence > 0.5f)
+{
+    // Defensive AI logic here (example: marking, blocking, positioning)
+    Vector2 markingTarget = Vector2.zero; // TODO: Replace with actual marking logic
+    bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.AttemptingBlock;
+    bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
+    var pitchGeometry = (_tacticPositioner as HandballManager.Simulation.AI.Positioning.TacticPositioner)?.Geometry as HandballManager.Simulation.Utils.PitchGeometryProvider;
+    if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vector3(markingTarget.x, SimConstants.BALL_RADIUS, markingTarget.y), player.TeamSimId == 0))
+    {
+        // Reroute around the 6m zone if not about to jump
+        markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
+    }
+    // If the path to target crosses the 6m zone and not jumping, reroute
+    if (!willBeInAir && pitchGeometry.WouldCrossGoalArea(player.Position, markingTarget, player.TeamSimId))
+    {
+        markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
+    }
+    // Use markingTarget for movement/positioning
 
-                if (useScreen.Data is ScreenUseData useData)
-                {
-                    player.TargetPlayer = useData.Screener;
-                    player.TargetPosition = useData.UseSpot;
-                }
-                else
-                {
-                    player.TargetPlayer = useScreen.Data as SimPlayer;
-                }
-                player.PlannedAction = PlayerAction.UsingScreen;
-                SetPlayerAction(player, PlayerAction.UsingScreen, 0.0f, 0.0f, state);
-                return;
-            }
+    if (useScreen.Data is ScreenUseData useData)
+    {
+        player.TargetPlayer = useData.Screener;
+        player.TargetPosition = useData.UseSpot;
+    }
+    else
+    {
+        player.TargetPlayer = useScreen.Data as SimPlayer;
+    }
+    player.PlannedAction = PlayerAction.UsingScreen;
+    SetPlayerAction(player, PlayerAction.UsingScreen, 0.0f, 0.0f, state);
+    return;
+}
 
             // --- Evaluate Action Scores ---
-            float shootScore = _shootDecisionMaker.EvaluateShootScore(player, state, tactic);
-            PassOption bestPass = _passDecisionMaker.GetBestPassOption(player, state, tactic);
-            float passScore = bestPass?.Score ?? 0f;
-            float dribbleScore = _dribbleDecisionMaker.EvaluateDribbleScore(player, state, tactic);
+float shootScore = _shootDecisionMaker.EvaluateShootScore(player, state, tactic);
+PassOption bestPass = _passDecisionMaker.GetBestPassOption(player, state, tactic);
+float passScore = bestPass?.Score ?? 0f;
+float dribbleScore = _dribbleDecisionMaker.EvaluateDribbleScore(player, state, tactic);
+
+// --- Phase Detection ---
+// Note: GamePhase is defined in Core.Enums.cs, state.CurrentPhase is available
+bool isTransitionPhase = state.CurrentPhase == GamePhase.TransitionToHomeAttack || state.CurrentPhase == GamePhase.TransitionToAwayAttack;
+bool isPositionalAttackPhase = state.CurrentPhase == GamePhase.HomeAttack || state.CurrentPhase == GamePhase.AwayAttack;
+
+
+if (isTransitionPhase)
+{
+    // Fast break: prioritize direct actions
+    phaseDribbleModifier = TRANSITION_DRIBBLE_MODIFIER;
+    phasePassModifier = TRANSITION_PASS_MODIFIER;
+    phaseShootModifier = TRANSITION_SHOOT_MODIFIER;
+    phaseScreenModifier = TRANSITION_SCREEN_MODIFIER;
+    phaseComplexPassModifier = TRANSITION_COMPLEX_PASS_MODIFIER;
+    prepTimeFactor = TRANSITION_PREP_TIME_FACTOR;
+    actionThresholdFactor = TRANSITION_ACTION_THRESHOLD_FACTOR;
+}
+else if (isPositionalAttackPhase)
+{
+    // Settled attack: encourage tactical play
+    phaseScreenModifier = POSITIONAL_SCREEN_MODIFIER;
+    // Could extend: phasePassModifier = POSITIONAL_FORMATION_PASS_MODIFIER; (if pass type detectable)
+}
+// (Other phases: keep modifiers at 1.0)
 
             // --- Apply Context Modifiers ---
             float tacticalRiskMod = _tacticalEvaluator.GetRiskModifier(tactic);
@@ -427,30 +480,42 @@ if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vect
             float combinedRiskFactor = tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
 
             // Adjust scores based on risk
-            shootScore *= combinedRiskFactor;
-            dribbleScore *= combinedRiskFactor * DRIBBLING_RISK_ADJUSTMENT;
-            passScore /= Mathf.Max(PASS_SAFETY_MIN_DIVISOR, combinedRiskFactor * PASS_SAFETY_ADJUSTMENT); // Divide for safety bias
+shootScore *= combinedRiskFactor;
+dribbleScore *= combinedRiskFactor * DRIBBLING_RISK_ADJUSTMENT;
+passScore /= Mathf.Max(PASS_SAFETY_MIN_DIVISOR, combinedRiskFactor * PASS_SAFETY_ADJUSTMENT); // Divide for safety bias
 
-            // Apply personality tendency modifiers
-            shootScore *= _personalityEvaluator.GetShootingTendencyModifier(player.BaseData);
-            passScore *= _personalityEvaluator.GetPassingTendencyModifier(player.BaseData);
-            dribbleScore *= _personalityEvaluator.GetDribblingTendencyModifier(player.BaseData);
+// Apply personality tendency modifiers
+shootScore *= _personalityEvaluator.GetShootingTendencyModifier(player.BaseData);
+passScore *= _personalityEvaluator.GetPassingTendencyModifier(player.BaseData);
+dribbleScore *= _personalityEvaluator.GetDribblingTendencyModifier(player.BaseData);
+
+// --- Apply Phase-specific Modifiers (after risk/personality) ---
+dribbleScore *= phaseDribbleModifier;
+passScore *= phasePassModifier;
+shootScore *= phaseShootModifier;
+// Note: Complex pass and screen modifiers would require more granular pass/screen type logic.
+// If pass is complex (not implemented here), could apply phaseComplexPassModifier.
+// For screen opportunities, see below.
 
             // --- Choose Best Action ---
-            float bestScore = BASE_ACTION_THRESHOLD;
-            PlayerAction chosenAction = PlayerAction.MovingWithBall; // Default
-            SimPlayer passTarget = bestPass?.Player; // Store potential target early
+// Lower threshold for taking action during transition (faster decision-making)
+float phaseActionThreshold = BASE_ACTION_THRESHOLD * actionThresholdFactor;
+float bestScore = phaseActionThreshold;
+PlayerAction chosenAction = PlayerAction.MovingWithBall; // Default
+SimPlayer passTarget = bestPass?.Player; // Store potential target early
 
-            if (shootScore > bestScore) { bestScore = shootScore; chosenAction = PlayerAction.PreparingShot; }
-            if (passScore > bestScore) { bestScore = passScore; chosenAction = PlayerAction.PreparingPass; } // Pass target already stored
-            if (dribbleScore > bestScore) { chosenAction = PlayerAction.Dribbling; }
+if (shootScore > bestScore) { bestScore = shootScore; chosenAction = PlayerAction.PreparingShot; }
+if (passScore > bestScore) { bestScore = passScore; chosenAction = PlayerAction.PreparingPass; } // Pass target already stored
+if (dribbleScore > bestScore) { chosenAction = PlayerAction.Dribbling; }
 
             // --- Set Player State ---
             switch (chosenAction)
             {
                 case PlayerAction.PreparingShot:
                     player.PlannedAction = PlayerAction.PreparingShot;
-                    SetPlayerAction(player, PlayerAction.PreparingShot, SHOT_PREP_TIME_BASE, SHOT_PREP_TIME_RANDOM_FACTOR, state);
+                    // Reduce shot prep time during transition phases for quick shots
+                    float shotPrepBase = SHOT_PREP_TIME_BASE * prepTimeFactor;
+                    SetPlayerAction(player, PlayerAction.PreparingShot, shotPrepBase, SHOT_PREP_TIME_RANDOM_FACTOR, state);
                     break;
                 case PlayerAction.PreparingPass:
                     // **FIXED:** Check passTarget (derived from bestPass.Player) is not null *before* using it.
@@ -458,7 +523,9 @@ if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vect
                     {
                         player.TargetPlayer = passTarget;
                         player.PlannedAction = PlayerAction.PreparingPass;
-                        SetPlayerAction(player, PlayerAction.PreparingPass, PASS_PREP_TIME_BASE, PASS_PREP_TIME_RANDOM_FACTOR, state);
+                        // Reduce pass prep time during transition phases for quick passes
+                        float passPrepBase = PASS_PREP_TIME_BASE * prepTimeFactor;
+                        SetPlayerAction(player, PlayerAction.PreparingPass, passPrepBase, PASS_PREP_TIME_RANDOM_FACTOR, state);
                     }
                     else
                     {

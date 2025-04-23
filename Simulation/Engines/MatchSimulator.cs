@@ -8,7 +8,8 @@ using System; // For Exception, ArgumentNullException
 using System.Threading;
 using HandballManager.Simulation.Utils;
 using HandballManager.Data;
-using HandballManager.Simulation.Events.Interfaces; // For Linq (used in ResolvePendingActions)
+using HandballManager.Simulation.Events.Interfaces;
+using System.Linq; // For Linq (used in ResolvePendingActions)
 
 namespace HandballManager.Simulation.Engines
 {
@@ -23,7 +24,7 @@ namespace HandballManager.Simulation.Engines
         
         // --- Simulation Constants ---
         // Time step remains fundamental to the loop orchestration
-        private const float TIME_STEP_SECONDS = 0.1f;
+        public const float TIME_STEP_SECONDS = 0.1f;
         // Match duration might be determined by external config or TimeManager later
         private const float DEFAULT_MATCH_DURATION_SECONDS = 60f * 60f;
         // Distance in meters for ball pickup detection
@@ -139,8 +140,21 @@ namespace HandballManager.Simulation.Engines
                   {
                       _state.Ball.OnPassCompletedBetweenTeammates += (teamSimId) =>
                       {
-                          // Notify passive play manager of a completed pass between teammates
-                          _passivePlayManager.OnPassMade(teamSimId);
+                          var status = _passivePlayManager.OnPassMade(teamSimId);
+                          if (status == PassivePlayStatus.ViolationTriggered && _eventHandler is HandballManager.Simulation.Events.Handlers.DefaultMatchEventHandler defaultHandler)
+                          {
+                              // Construct ActionResult for turnover
+                              var state = _state;
+                              var passiveTurnoverResult = new ActionResult {
+                                  Outcome = ActionResultOutcome.Turnover,
+                                  PrimaryPlayer = null,
+                                  SecondaryPlayer = null,
+                                  Reason = "Passive Play Violation (Pass Limit)",
+                                  ImpactPosition = state.Ball?.Position ?? state.PlayersOnCourt.FirstOrDefault()?.Position ?? Vector2.zero
+                              };
+                              defaultHandler.HandleTurnover(passiveTurnoverResult, state);
+                              // No need to call ResetPassivePlay here; PassivePlayManager resets itself.
+                          }
                       };
                   }
              }

@@ -4,67 +4,27 @@ using System.Collections.Generic;
 using System.Linq; // Required for Linq operations
 using HandballManager.Data;          // Core data structures
 using HandballManager.Simulation;    // Simulation engines
-using HandballManager.UI;            // UI manager
 using HandballManager.Gameplay;    // Gameplay systems (Tactic, Contract, Transfer)
 using HandballManager.Management;    // League, Schedule, Finance managers
-using HandballManager.Core.MatchData;
 using HandballManager.Simulation.Engines;
 using System.Threading;
-using HandballManager.Installers;
 using HandballManager.Simulation.Events;
+using HandballManager.Simulation.Installers;
+using Zenject;
+using HandballManager.Core;  // For GameState enum
+
 
 // Ensure required namespaces exist, even if classes are basic placeholders
-namespace HandballManager.Management { public class FinanceManager { public void ProcessWeeklyPayments(List<TeamData> allTeams) { /* TODO */ } public void ProcessMonthly(List<TeamData> allTeams) { /* TODO */ } } }
+namespace HandballManager.Management { public class FinanceManager { public void ProcessWeeklyPayments(List<TeamData> allTeams) { _ = allTeams; /* TODO */ } public void ProcessMonthly(List<TeamData> allTeams) { _ = allTeams; /* TODO */ } } }
 
 // Ensure required data structures exist
 // Note: LeagueStandingEntry is now defined in HandballManager.Management namespace
 
 
-namespace HandballManager.Core
+namespace HandballManager.Core.GameManager
 {
-    // Basic placeholder LeagueData
-    [Serializable]
-    public class LeagueData { public int LeagueID; public string Name; /* Add standings, teams list etc. */ }
-    // Basic placeholder MatchInfo for schedule (ensure namespace matches if defined elsewhere)
-    namespace MatchData
-    {
-        [Serializable]
-        public struct MatchInfo
-        {
-            public DateTime Date;
-            public int HomeTeamID;
-            public int AwayTeamID;
-            public string Location;
-            public string Referee;
-
-            public override bool Equals(object obj)
-            {
-                if (obj is MatchInfo other)
-                {
-                    return Date == other.Date &&
-                           HomeTeamID == other.HomeTeamID &&
-                           AwayTeamID == other.AwayTeamID;
-                }
-                return false;
-            }
-
-            public override int GetHashCode()
-            {
-                return HashCode.Combine(Date, HomeTeamID, AwayTeamID);
-            }
-
-            public static bool operator ==(MatchInfo left, MatchInfo right)
-            {
-                return left.Equals(right);
-            }
-
-            public static bool operator !=(MatchInfo left, MatchInfo right)
-            {
-                return !(left == right);
-            }
-        }
-    }
-
+    // Basic placeholder HandballManager.Data.MatchInfo for schedule (ensure namespace matches if defined elsewhere)
+    
         /// <summary>
     /// Singleton GameManager responsible for overall game state,
     /// managing core systems, and triggering the main game loop updates.
@@ -72,22 +32,22 @@ namespace HandballManager.Core
     public class GameManager : MonoBehaviour
     {
         // --- Singleton Instance ---
-        private static GameManager _instance;
+        private static GameManager instance;
         public static GameManager Instance
         {
             get
             {
-                if (_instance == null)
+                if (instance == null)
                 {
-                    _instance = FindFirstObjectByType<GameManager>();
-                     if (_instance == null)
+                    instance = FindFirstObjectByType<GameManager>();
+                     if (instance == null)
                      {
                          GameObject singletonObject = new GameObject("GameManager");
-                         _instance = singletonObject.AddComponent<GameManager>();
+                         instance = singletonObject.AddComponent<GameManager>();
                          Debug.Log("GameManager instance was null. Created a new GameManager object.");
                      }
                 }
-                return _instance;
+                return instance;
             }
         }
 
@@ -95,30 +55,30 @@ namespace HandballManager.Core
         public GameState CurrentState { get; private set; } = GameState.MainMenu;
         
         // --- Service Container ---
-        private IServiceContainer _serviceContainer;
+        private IServiceContainer serviceContainer;
         
         // --- Core System References ---
         // These properties provide backward compatibility during refactoring
-        public TimeManager TimeManager => _serviceContainer.Get<TimeManager>();
+        public TimeManager TimeManager => serviceContainer.Get<TimeManager>();
         public UIManager UIManagerRef { get; private set; } // Keep direct reference for UI updates
         
         // These properties will be removed after full migration to DI
-        private MatchEngine _matchEngine => _serviceContainer.Get<IMatchEngine>() as MatchEngine;
-        private TrainingSimulator _trainingSimulator => _serviceContainer.Get<TrainingSimulator>();
-        private MoraleSimulator _moraleSimulator => _serviceContainer.Get<MoraleSimulator>();
-        private PlayerDevelopment _playerDevelopment => _serviceContainer.Get<PlayerDevelopment>();
-        private TransferManager _transferManager => _serviceContainer.Get<TransferManager>();
-        private ContractManager _contractManager => _serviceContainer.Get<ContractManager>();
-        private LeagueManager _leagueManager => _serviceContainer.Get<LeagueManager>();
-public LeagueManager LeagueManager => _leagueManager;
-        private ScheduleManager _scheduleManager => _serviceContainer.Get<ScheduleManager>();
-        private FinanceManager _financeManager => _serviceContainer.Get<FinanceManager>();
+        private MatchEngine MatchEngine => serviceContainer.Get<IMatchEngine>() as MatchEngine;
+        private TrainingSimulator TrainingSimulator => serviceContainer.Get<TrainingSimulator>();
+        private MoraleSimulator MoraleSimulator => serviceContainer.Get<MoraleSimulator>();
+        private PlayerDevelopment PlayerDevelopment => serviceContainer.Get<PlayerDevelopment>();
+        private TransferManager TransferManager => serviceContainer.Get<TransferManager>();
+        private ContractManager ContractManager => serviceContainer.Get<ContractManager>();
+        private LeagueManager LeagueManagerDI => serviceContainer.Get<LeagueManager>();
+        public LeagueManager LeagueManager => LeagueManagerDI;
+        private ScheduleManager ScheduleManager => serviceContainer.Get<ScheduleManager>();
+        private FinanceManager FinanceManager => serviceContainer.Get<FinanceManager>();
 
         // --- Game Data (Loaded/Managed by GameManager) ---
-        public List<LeagueData> AllLeagues { get; private set; } = new List<LeagueData>();
-        public List<TeamData> AllTeams { get; private set; } = new List<TeamData>();
-        public List<PlayerData> AllPlayers { get; private set; } = new List<PlayerData>(); // Caution: Potentially large!
-        public List<StaffData> AllStaff { get; private set; } = new List<StaffData>();
+        public List<LeagueData> AllLeagues { get; private set; } = new();
+        public List<TeamData> AllTeams { get; private set; } = new();
+        public List<PlayerData> AllPlayers { get; private set; } = new(); // Caution: Potentially large!
+        public List<StaffData> AllStaff { get; private set; } = new();
         public TeamData PlayerTeam { get; private set; } // Reference to the player-controlled team within AllTeams
 
         // --- Constants ---
@@ -130,13 +90,13 @@ public LeagueManager LeagueManager => _leagueManager;
         // --- Unity Methods ---
         private void Awake()
         {
-            if (_instance != null && _instance != this)
+            if (instance != null && instance != this)
             {
                 Debug.LogWarning("Duplicate GameManager detected. Destroying new instance.");
                 Destroy(this.gameObject);
                 return;
             }
-            _instance = this;
+            instance = this;
             DontDestroyOnLoad(this.gameObject);
 
             InitializeSystems();
@@ -173,31 +133,31 @@ public LeagueManager LeagueManager => _leagueManager;
         private void InitializeSystems()
         {
             // Initialize service container
-            _serviceContainer = new ServiceContainer();
+            serviceContainer = new ServiceContainer();
             
             // Register event bus first
-            _serviceContainer.Bind<IEventBus, EventBus>();
+            serviceContainer.Bind<IEventBus, EventBus>();
             
             // Register core services
             var timeManager = new TimeManager(new DateTime(2024, 7, 1)); // Default start date
-            _serviceContainer.BindInstance(timeManager);
+            serviceContainer.BindInstance(timeManager);
             
             // Find essential MonoBehaviour systems
             UIManagerRef = UIManager.Instance;
             if (UIManagerRef == null) Debug.LogError("UIManager could not be found or created!");
-            _serviceContainer.BindInstance(UIManagerRef);
+            serviceContainer.BindInstance(UIManagerRef);
 
             // Register simulation services
-            _serviceContainer.Bind<IMatchEngine, MatchEngine>();
-            _serviceContainer.Bind<IMatchSimulationCoordinator, MatchSimulationCoordinator>();
-            _serviceContainer.BindInstance<TrainingSimulator>(new TrainingSimulator());
-            _serviceContainer.BindInstance<MoraleSimulator>(new MoraleSimulator());
-            _serviceContainer.BindInstance<PlayerDevelopment>(new PlayerDevelopment());
-            _serviceContainer.BindInstance<TransferManager>(new TransferManager());
-            _serviceContainer.BindInstance<ContractManager>(new ContractManager());
-            _serviceContainer.BindInstance<LeagueManager>(new LeagueManager());
-            _serviceContainer.BindInstance<ScheduleManager>(new ScheduleManager());
-            _serviceContainer.BindInstance<FinanceManager>(new FinanceManager());
+            serviceContainer.Bind<IMatchEngine, MatchEngine>();
+            serviceContainer.Bind<IMatchSimulationCoordinator, MatchSimulationCoordinator>();
+            serviceContainer.BindInstance<TrainingSimulator>(new TrainingSimulator());
+            serviceContainer.BindInstance<MoraleSimulator>(new MoraleSimulator());
+            serviceContainer.BindInstance<PlayerDevelopment>(new PlayerDevelopment());
+            serviceContainer.BindInstance<TransferManager>(new TransferManager());
+            serviceContainer.BindInstance<ContractManager>(new ContractManager());
+            serviceContainer.BindInstance<LeagueManager>(new LeagueManager());
+            serviceContainer.BindInstance<ScheduleManager>(new ScheduleManager());
+            serviceContainer.BindInstance<FinanceManager>(new FinanceManager());
             
             // Install simulation bindings
             var simulationInstaller = gameObject.AddComponent<SimulationInstaller>();
@@ -220,7 +180,7 @@ public LeagueManager LeagueManager => _leagueManager;
             Debug.Log($"Game State Changing: {previousState} -> {newState}");
             
             // Publish state change event before updating state
-            _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent {
+            serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent {
                 OldState = CurrentState,
                 NewState = newState
             });
@@ -275,10 +235,10 @@ public LeagueManager LeagueManager => _leagueManager;
             if (PlayerTeam == null) return;
 
             // Get next scheduled match for player team
-            var nextMatch = _scheduleManager.GetMatchesForDate(TimeManager.CurrentDate)
+            var nextMatch = ScheduleManager.GetUpcomingMatchesForTeam(PlayerTeam.TeamID, TimeManager.CurrentDate)
                 .FirstOrDefault(m => m.HomeTeamID == PlayerTeam.TeamID || m.AwayTeamID == PlayerTeam.TeamID);
 
-            if(nextMatch != default(MatchInfo))
+            if(nextMatch != default(HandballManager.Data.MatchInfo))
             {
                 // Get team references from IDs
                 var homeTeam = AllTeams.FirstOrDefault(t => t.TeamID == nextMatch.HomeTeamID);
@@ -289,7 +249,7 @@ public LeagueManager LeagueManager => _leagueManager;
                     ChangeState(GameState.SimulatingMatch);
                     var progress = new Progress<float>();
                     var cancellationToken = new CancellationTokenSource().Token;
-                    _matchEngine.SimulateMatch(homeTeam, awayTeam, homeTeam.CurrentTactic, awayTeam.CurrentTactic,
+                    MatchEngine.SimulateMatch(homeTeam, awayTeam, TacticConverter.FromData(homeTeam.CurrentTactic), TacticConverter.FromData(awayTeam.CurrentTactic),
                         UnityEngine.Random.Range(1, 999999), progress, cancellationToken);
                     ChangeState(GameState.MatchReport);
                 }
@@ -311,9 +271,9 @@ public LeagueManager LeagueManager => _leagueManager;
 
             // 1. Clear Existing Data
             AllLeagues.Clear(); AllTeams.Clear(); AllPlayers.Clear(); AllStaff.Clear(); PlayerTeam = null;
-            _leagueManager?.ResetTablesForNewSeason(); // Ensure tables are clear
-            _scheduleManager?.HandleSeasonTransition(); // Clear old schedule
-
+            LeagueManagerDI?.ResetTablesForNewSeason(); // Ensure tables are clear
+            ScheduleManager?.HandleSeasonTransition(); // Clear old schedule
+            ScheduleManager?.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate); // Pass AllTeams explicitly
             // 2. Load Default Database
             LoadDefaultDatabase(); // Populates the lists
 
@@ -331,9 +291,9 @@ public LeagueManager LeagueManager => _leagueManager;
             TimeManager.SetDate(new DateTime(2024, 7, 1)); // Standard start date
 
             // 5. Initial Setup (schedule, league tables)
-            _scheduleManager?.GenerateNewSchedule(); // Generate AFTER teams are loaded
+            ScheduleManager?.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate); // Generate AFTER teams are loaded
             foreach(var league in AllLeagues) { // Initialize tables for all leagues
-                _leagueManager?.InitializeLeagueTable(league.LeagueID, true);
+                LeagueManagerDI?.InitializeLeagueTable(league.LeagueID, AllTeams, true);
             }
 
             // 6. Transition to Initial Game State
@@ -367,15 +327,24 @@ public LeagueManager LeagueManager => _leagueManager;
         }
 
 
+        
+        
+
+        /// <summary>
+        /// Orchestration centrale du chargement :
+        /// Toute la logique de répartition des données chargées doit rester ici (GameManager).
+        /// SaveDataManager ne manipule que des types Data purs (DTOs, primitives).
+        /// Ajouter toute nouvelle donnée à restaurer ici, en passant par les méthodes d’import des managers.
+        /// </summary>
         public void LoadGame()
         {
             // Get the SaveDataManager from the service container
-            var saveDataManager = _serviceContainer.Get<SaveDataManager>();
+            var saveDataManager = serviceContainer.Get<SaveDataManager>();
             if (saveDataManager == null)
             {
                 // Create and register if not already in container
                 saveDataManager = new SaveDataManager();
-                _serviceContainer.BindInstance(saveDataManager);
+                serviceContainer.BindInstance(saveDataManager);
             }
             
             // Get the most recent save file path
@@ -421,9 +390,11 @@ public LeagueManager LeagueManager => _leagueManager;
                             loadedTables.Add(saveData.LeagueTableKeys[i], saveData.LeagueTableValues[i]);
                         }
                     }
-                    _leagueManager?.RestoreTablesFromSave(loadedTables);
+                    LeagueManagerDI?.RestoreTablesFromSave(loadedTables);
 
-                    // TODO: Restore ScheduleManager state if saving it
+                    // TODO: Restaurer le planning via ScheduleManager si la sauvegarde du planning est implémentée
+                    // if (saveData.ScheduleKeys != null && saveData.ScheduleValues != null)
+                    //     ScheduleManager?.RestoreSchedulesFromSave(...); // à définir
 
                     // Restore Game State (Set directly before ChangeState triggers UI/logic)
                     CurrentState = saveData.CurrentGameState;
@@ -431,7 +402,7 @@ public LeagueManager LeagueManager => _leagueManager;
                     Debug.Log($"Game Loaded Successfully. Date: {TimeManager.CurrentDate.ToShortDateString()}, State: {CurrentState}");
 
                     // Publish load completed event
-                    _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
+                    serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
                     {
                         OldState = GameState.Loading,
                         NewState = CurrentState
@@ -454,47 +425,51 @@ public LeagueManager LeagueManager => _leagueManager;
             }
         }
 
+        /// <summary>
+        /// Orchestration centrale de la sauvegarde :
+        /// Toute la logique de collecte des états à sauvegarder doit rester ici (GameManager).
+        /// SaveDataManager ne manipule que des types Data purs (DTOs, primitives).
+        /// Ajouter toute nouvelle donnée à sauvegarder ici, en passant par les méthodes d’export des managers.
+        /// </summary>
         public void SaveGame()
         {
              if (!IsInActivePlayState() && CurrentState != GameState.MainMenu && CurrentState != GameState.Paused) {
                  Debug.LogWarning($"Cannot save game in current state: {CurrentState}");
                  UIManagerRef?.DisplayPopup($"Cannot save in state: {CurrentState}"); return;
              }
+            
+            Debug.Log("Saving Game...");
+            UIManagerRef?.DisplayPopup("Saving Game..."); // Temporary popup
 
-             Debug.Log("Saving Game...");
-             UIManagerRef?.DisplayPopup("Saving Game..."); // Temporary popup
-
-             try
-             {
-                 // Get the SaveDataManager from the service container
-                 var saveDataManager = _serviceContainer.Get<SaveDataManager>();
-                 if (saveDataManager == null)
-                 {
-                     // Create and register if not already in container
-                     saveDataManager = new SaveDataManager();
-                     _serviceContainer.BindInstance(saveDataManager);
-                 }
+            try
+            {
+                // Get the SaveDataManager from the service container
+                var saveDataManager = serviceContainer.Get<SaveDataManager>();
+                if (saveDataManager == null)
+                {
+                    // Create and register if not already in container
+                    saveDataManager = new SaveDataManager();
+                    serviceContainer.BindInstance(saveDataManager);
+                }
                  
-                 // Get league tables from LeagueManager
-                 var leagueTables = _leagueManager?.GetTablesForSave() ?? new Dictionary<int, List<LeagueStandingEntry>>();
-                 
-                 // Save the game using the SaveDataManager
+                // Get league tables from LeagueManager
+                var leagueTables = LeagueManagerDI?.GetTablesForSave() ?? new Dictionary<int, List<LeagueStandingEntry>>();
                  string savePath = saveDataManager.SaveGame(
-                     CurrentState,
-                     AllTeams,
-                     TimeManager,
-                     PlayerTeam?.TeamID ?? -1,
-                     AllLeagues,
-                     AllPlayers,
-                     AllStaff,
-                     leagueTables
-                 );
+                      CurrentState,
+                      AllTeams,
+                      TimeManager,
+                      PlayerTeam?.TeamID ?? -1,
+                      AllLeagues,
+                      AllPlayers,
+                      AllStaff,
+                      leagueTables
+                  );
 
                  Debug.Log($"Game Saved Successfully to {savePath}.");
                  UIManagerRef?.DisplayPopup("Game Saved!");
 
                 // Publish save completed event
-                _serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
+                serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
                 {
                     OldState = GameState.Loading,
                     NewState = CurrentState
@@ -519,7 +494,7 @@ public LeagueManager LeagueManager => _leagueManager;
         private void HandleDayAdvanced()
         {
             // 1. Check for scheduled matches today
-            List<MatchInfo> matchesToday = _scheduleManager?.GetMatchesForDate(TimeManager.CurrentDate) ?? new List<MatchInfo>();
+            List<HandballManager.Data.MatchInfo> matchesToday = ScheduleManager?.GetMatchesForDate(TimeManager.CurrentDate) ?? new List<HandballManager.Data.MatchInfo>();
             bool playerMatchSimulatedToday = false;
             foreach (var matchInfo in matchesToday)
             {
@@ -546,7 +521,7 @@ public LeagueManager LeagueManager => _leagueManager;
             // --- Continue Daily Processing if no player match paused time ---
 
             // 2. Update player injury status (ALL players)
-             foreach (var player in AllPlayers) { player.UpdateInjuryStatus(); }
+             foreach (var player in AllPlayers) { player.UpdateInjuryStatus(TimeManager.CurrentDate); }
 
             // 3. Process transfer/contract daily steps (Placeholders)
              // TransferManager?.ProcessDaily();
@@ -554,7 +529,7 @@ public LeagueManager LeagueManager => _leagueManager;
 
             // 4. Update player condition (non-training recovery)
               foreach (var player in AllPlayers) {
-                 if (!player.IsInjured() && player.Condition < 1.0f) {
+                 if (!player.IsInjured(TimeManager.CurrentDate) && player.Condition < 1.0f) {
                      player.Condition = Mathf.Clamp(player.Condition + 0.02f * (player.NaturalFitness / 75f), 0.1f, 1f);
                  }
               }
@@ -564,33 +539,33 @@ public LeagueManager LeagueManager => _leagueManager;
          private void HandleWeekAdvanced()
          {
              Debug.Log($"GameManager handling Week Advanced: Week starting {TimeManager.CurrentDate.ToShortDateString()}");
-             if (_leagueManager == null || _financeManager == null || _trainingSimulator == null || _moraleSimulator == null) {
+             if (LeagueManagerDI == null || FinanceManager == null || TrainingSimulator == null || MoraleSimulator == null) {
                  Debug.LogError("One or more managers are null during HandleWeekAdvanced!"); return;
              }
 
              // 1. Simulate Training for ALL Teams
              foreach (var team in AllTeams) {
                  TrainingFocus focus = (team == PlayerTeam) ? TrainingFocus.General : GetAITrainingFocus(team); // TODO: Get player focus setting
-                 _trainingSimulator.SimulateWeekTraining(team, focus);
+                 TrainingSimulator.SimulateWeekTraining(team, focus, Intensity.Normal, TimeManager.CurrentDate);
              }
 
              // 2. Update Morale for ALL Teams
-              foreach (var team in AllTeams) { _moraleSimulator.UpdateMoraleWeekly(team); }
+              foreach (var team in AllTeams) { MoraleSimulator.UpdateMoraleWeekly(team, TimeManager.CurrentDate, LeagueManagerDI); }
 
              // 3. Update Finances for ALL Teams
-             _financeManager.ProcessWeeklyPayments(AllTeams);
+             FinanceManager.ProcessWeeklyPayments(AllTeams);
 
              // 4. Update League Tables
-             _leagueManager.UpdateStandings(); // Recalculate and sort tables based on results processed daily
+             LeagueManagerDI.UpdateStandings(); // Recalculate and sort tables based on results processed daily
          }
 
         private void HandleMonthAdvanced()
         {
             Debug.Log($"GameManager handling Month Advanced: New Month {TimeManager.CurrentDate:MMMM yyyy}");
-            if (_financeManager == null) { Debug.LogError("FinanceManager is null during HandleMonthAdvanced!"); return; }
+            if (FinanceManager == null) { Debug.LogError("FinanceManager is null during HandleMonthAdvanced!"); return; }
 
             // 1. Monthly Finances
-            _financeManager.ProcessMonthly(AllTeams);
+            FinanceManager.ProcessMonthly(AllTeams);
 
             // 2. Scouting / Youth Dev TODOs...
 
@@ -599,14 +574,14 @@ public LeagueManager LeagueManager => _leagueManager;
         }
 
         // --- Simulation Trigger ---
-        private IMatchSimulationCoordinator _simCoordinator => _serviceContainer.Get<IMatchSimulationCoordinator>();
+        private IMatchSimulationCoordinator simCoordinator => serviceContainer.Get<IMatchSimulationCoordinator>();
 
         public async void SimulateMatch(TeamData home, TeamData away, Tactic homeTactic = null, Tactic awayTactic = null)
         {
             using var cts = new System.Threading.CancellationTokenSource();
             try
             {
-                if (_simCoordinator == null)
+                if (simCoordinator == null)
                 {
                     Debug.LogError("Simulation coordinator not available!");
                     return;
@@ -625,11 +600,11 @@ public LeagueManager LeagueManager => _leagueManager;
                 }
 
                 // Handle null tactics safely
-                Tactic validatedHomeTactic = homeTactic ?? home?.CurrentTactic ?? new Tactic();
-                Tactic validatedAwayTactic = awayTactic ?? away?.CurrentTactic ?? new Tactic();
+                Tactic validatedHomeTactic = homeTactic ?? (home != null ? TacticConverter.FromData(home.CurrentTactic) : null) ?? new Tactic();
+                Tactic validatedAwayTactic = awayTactic ?? (away != null ? TacticConverter.FromData(away.CurrentTactic) : null) ?? new Tactic();
 
                 // Should handle cancellation before processing results
-                MatchResult result = await _simCoordinator.RunSimulationAsync(
+                MatchResult result = await simCoordinator.RunSimulationAsync(
                     home,
                     away,
                     validatedHomeTactic,
@@ -644,15 +619,15 @@ public LeagueManager LeagueManager => _leagueManager;
 
                 // --- Post-Match Processing ---
                 // 1. Update Morale
-                _moraleSimulator.UpdateMoralePostMatch(home, result);
-                _moraleSimulator.UpdateMoralePostMatch(away, result);
+                MoraleSimulator.UpdateMoralePostMatch(home, result, TimeManager.CurrentDate, AllTeams);
+                MoraleSimulator.UpdateMoralePostMatch(away, result, TimeManager.CurrentDate, AllTeams);
 
                 // 2. Apply Fatigue
                 Action<TeamData> processFatigue = (team) => {
                  if(team?.Roster != null) {
                      // Apply to players assumed to have played (needs better tracking from MatchEngine ideally)
                      foreach(var p in team.Roster.Take(10)) { // Simple: affect first 10 players
-                         if (!p.IsInjured()) p.Condition = Mathf.Clamp(p.Condition - UnityEngine.Random.Range(0.1f, 0.25f), 0.1f, 1.0f);
+                         if (!p.IsInjured(TimeManager.CurrentDate)) p.Condition = Mathf.Clamp(p.Condition - UnityEngine.Random.Range(0.1f, 0.25f), 0.1f, 1.0f);
                      }
                  }
             };
@@ -660,7 +635,7 @@ public LeagueManager LeagueManager => _leagueManager;
             processFatigue(away);
 
             // 3. Update League Tables
-            _leagueManager.ProcessMatchResult(result); // Send result to league manager
+            LeagueManagerDI.ProcessMatchResult(result, AllTeams); // Send result to league manager (AllTeams injected)
 
             // 4. Generate News TODO
 
@@ -670,7 +645,7 @@ public LeagueManager LeagueManager => _leagueManager;
                 UIManagerRef?.ShowMatchPreview(result); // Show results panel
                 ChangeState(GameState.MatchReport); // Go to report state (Time remains paused)
             }
-            _simCoordinator.CleanupResources();
+            simCoordinator.CleanupResources();
             }
             catch (ValidationException ex)
             {
@@ -729,17 +704,17 @@ public LeagueManager LeagueManager => _leagueManager;
 
 
         // --- FindNextPlayerMatch() --- (Debug Helper)
-        private MatchInfo FindNextPlayerMatch()
+        private HandballManager.Data.MatchInfo FindNextPlayerMatch()
         {
-            if (PlayerTeam == null || _scheduleManager == null) return default;
+            if (PlayerTeam == null || ScheduleManager == null) return default;
 
-            List<MatchInfo> upcoming = _scheduleManager.GetMatchesForDate(TimeManager.CurrentDate);
+            List<HandballManager.Data.MatchInfo> upcoming = ScheduleManager.GetUpcomingMatchesForTeam(PlayerTeam.TeamID, TimeManager.CurrentDate);
             DateTime checkDate = TimeManager.CurrentDate;
             int safety = 0;
             // Find next match involving player team, starting from today
             while (!upcoming.Any(m => m.HomeTeamID == PlayerTeam.TeamID || m.AwayTeamID == PlayerTeam.TeamID) && safety < 365) {
                 checkDate = checkDate.AddDays(1);
-                upcoming = _scheduleManager.GetMatchesForDate(checkDate);
+                upcoming = ScheduleManager.GetUpcomingMatchesForTeam(PlayerTeam.TeamID, checkDate);
                 safety++;
             }
 
@@ -777,17 +752,17 @@ public LeagueManager LeagueManager => _leagueManager;
             Debug.Log($"--- Starting Off-Season {TimeManager.CurrentDate.Year} ---");
             ChangeState(GameState.OffSeason);
 
-            _leagueManager?.FinalizeSeason(); // Awards, Promotions/Relegations
+            LeagueManagerDI?.FinalizeSeason(AllTeams); // Awards, Promotions/Relegations (AllTeams injected)
 
             // ContractManager?.ProcessExpiries(AllPlayers, AllStaff, AllTeams); // TODO
 
-            foreach(var player in AllPlayers) { _playerDevelopment?.ProcessAnnualDevelopment(player); }
+            foreach(var player in AllPlayers) { PlayerDevelopment?.ProcessAnnualDevelopment(player); }
 
             // Staff Expiries TODO
             // News TODO
 
             // Generate New Schedule (clears old one implicitly)
-             _scheduleManager?.GenerateNewSchedule();
+             ScheduleManager?.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate);
 
             UIManagerRef?.DisplayPopup("Off-Season has begun!");
         }
@@ -801,7 +776,7 @@ public LeagueManager LeagueManager => _leagueManager;
              // Ensure League Tables are ready/reset for the new season
              // FinalizeSeason might have already reset them, or init here if needed.
              foreach(var league in AllLeagues) {
-                 _leagueManager?.InitializeLeagueTable(league.LeagueID, true); // Re-initialize based on current team league IDs
+                 LeagueManagerDI?.InitializeLeagueTable(league.LeagueID, AllTeams, true); // Re-initialize based on current team league IDs
              }
 
              // League Structure Updates (Promotions reflected in TeamData.LeagueID) TODO
@@ -819,7 +794,7 @@ public LeagueManager LeagueManager => _leagueManager;
              if (TimeManager != null) {
                 TimeManager.OnDayAdvanced -= HandleDayAdvanced; TimeManager.OnWeekAdvanced -= HandleWeekAdvanced; TimeManager.OnMonthAdvanced -= HandleMonthAdvanced;
              }
-             if (_instance == this) { _instance = null; }
+             if (instance == this) { instance = null; }
          }
 
 
@@ -827,7 +802,7 @@ public LeagueManager LeagueManager => _leagueManager;
         private TeamData CreatePlaceholderTeam(int id, string name, int reputation, float budget)
         {
             TeamData team = new TeamData { TeamID = id, Name = name, Reputation = reputation, Budget = budget, LeagueID = 1 };
-            team.CurrentTactic = new Tactic { TacticName = "Balanced Default" };
+            team.CurrentTactic = new TacticData { Name = "Balanced Default", TacticID = Guid.NewGuid() };
             team.Roster = new List<PlayerData>();
             // Add players (Ensure PlayerData constructor assigns ID)
             team.AddPlayer(CreatePlaceholderPlayer(name + " GK", PlayerPosition.Goalkeeper, 25, 65, 75, team.TeamID));

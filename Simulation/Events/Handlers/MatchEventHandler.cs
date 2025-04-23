@@ -5,18 +5,36 @@ using HandballManager.Data;
 using HandballManager.Simulation.Utils;
 using HandballManager.Core;
 using HandballManager.Simulation.Engines;
+using HandballManager.Simulation.Physics;
 
 namespace HandballManager.Simulation.Events.Handlers
 {
-    public partial class MatchEventHandler
+    public partial class MatchEventHandler : DefaultMatchEventHandler
     {
+        private readonly MatchSimulator _simulator; // Reference for logging events
+        private readonly IGeometryProvider _geometry;
+        private readonly JumpSimulator _jumpSimulator;
+
+        /// <summary>
+        /// Initializes a new instance of the MatchEventHandler.
+        /// </summary>
+        /// <param name="simulator">A reference to the parent MatchSimulator for logging.</param>
+        /// <param name="geometry">The geometry provider for the match.</param>
+        /// <param name="jumpSimulator">The jump simulator for player jumps.</param>
+        public MatchEventHandler(MatchSimulator simulator, IGeometryProvider geometry, JumpSimulator jumpSimulator)
+            : base(geometry)
+        {
+            _simulator = simulator ?? throw new ArgumentNullException(nameof(simulator));
+            _jumpSimulator = jumpSimulator ?? throw new ArgumentNullException(nameof(jumpSimulator));
+        }
+
         // Team ID constants
-private const int HOME_TEAM_ID = SimConstants.HOME_TEAM_ID;
-private const int AWAY_TEAM_ID = SimConstants.AWAY_TEAM_ID;
+        private const int HOME_TEAM_ID = SimConstants.HOME_TEAM_ID;
+        private const int AWAY_TEAM_ID = SimConstants.AWAY_TEAM_ID;
 
         // --- Constants ---
         // Suspension times now reference SimConstants
-private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TIME;
+        private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TIME;
         private const float RED_CARD_SUSPENSION_TIME = SimConstants.RED_CARD_SUSPENSION_TIME;
         private const float LOOSE_BALL_MIN_REBOUND_SPEED = 1f;
         private const float LOOSE_BALL_MAX_REBOUND_SPEED = 3f;
@@ -25,19 +43,6 @@ private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TI
         private const float OOB_RESTART_BUFFER = 0.1f; // How far inside boundary to place restart position
         private float GOAL_THROW_RESTART_DIST => _geometry.GoalAreaRadius + 0.2f; // Distance from goal center
         private const float MIN_DISTANCE_CHECK_SQ = 0.01f; // Minimum squared distance for position checks
-
-        private readonly MatchSimulator _simulator; // Reference for logging events
-        private readonly IGeometryProvider _geometry;
-
-        /// <summary>
-        /// Initializes a new instance of the MatchEventHandler.
-        /// </summary>
-        /// <param name="simulator">A reference to the parent MatchSimulator for logging.</param>
-        public MatchEventHandler(MatchSimulator simulator, IGeometryProvider geometry)
-        {
-            _simulator = simulator ?? throw new ArgumentNullException(nameof(simulator));
-            _geometry = geometry ?? throw new ArgumentNullException(nameof(geometry));
-        }
 
         /// <summary>
         /// Main entry point called after an action is resolved or a reactive event occurs.
@@ -69,67 +74,6 @@ private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TI
                 default: Debug.LogWarning($"[MatchEventHandler] Unhandled ActionResult Outcome: {result.Outcome}"); break;
             }
         }
-
-        /// <summary>
-        /// Resets a player's action state to Idle, clearing timers and targets.
-        /// Ensures player is valid before attempting reset.
-        /// </summary>
-        /// <param name="player">The player whose state to reset.</param>
-        /// <param name="outcomeContext">The outcome leading to the reset.</param>
-        internal void ResetPlayerActionState(SimPlayer player, ActionResultOutcome outcomeContext = ActionResultOutcome.Success)
-        {
-             if (player == null) return; // Safety check
-
-             // Do not reset if player is suspended
-             if (player.CurrentAction == PlayerAction.Suspended) {
-                  return;
-             }
-
-             // Persist receiving state unless pass was intercepted or outcome dictates reset
-             if (player.CurrentAction == PlayerAction.ReceivingPass && outcomeContext != ActionResultOutcome.Intercepted) {
-                 // Potentially check if ball is still incoming? For now, let AI re-evaluate.
-             }
-
-             // Reset most actions to Idle
-             player.CurrentAction = PlayerAction.Idle;
-             player.ActionTimer = 0f;
-             player.TargetPlayer = null;
-             // Keep TargetPosition? AI often recalculates, but clearing might be safer if action failed completely.
-             // player.TargetPosition = player.Position; // Option: reset target pos
-        }
-
-        // --- Helper Method for Stat Increments ---
-        /// <summary>
-        /// Safely increments a specific stat for the relevant team.
-        /// </summary>
-        /// <param name="state">The current MatchState.</param>
-        /// <param name="player">The player whose team's stats to update.</param>
-        /// <param name="updateAction">An action delegate that modifies the TeamMatchStats object.</param>
-        private void IncrementStat(MatchState state, SimPlayer player, Action<TeamMatchStats> updateAction)
-        {
-            if (player?.BaseData == null || state == null || updateAction == null) return; // Safety checks
-
-            TeamMatchStats stats = (player.TeamSimId == HOME_TEAM_ID) ? state.CurrentHomeStats : state.CurrentAwayStats;
-            if (stats != null) {
-                updateAction(stats);
-            } else {
-                Debug.LogWarning($"[MatchEventHandler] Could not find stats object for TeamSimId {player.TeamSimId} to increment stat.");
-            }
-        }
-        /// <summary>Overload for using teamSimId directly.</summary>
-        private void IncrementStat(MatchState state, int teamSimId, Action<TeamMatchStats> updateAction)
-        {
-             if (state == null || updateAction == null || (teamSimId != HOME_TEAM_ID && teamSimId != AWAY_TEAM_ID)) return; // Safety checks
-
-             TeamMatchStats stats = (teamSimId == HOME_TEAM_ID) ? state.CurrentHomeStats : state.CurrentAwayStats;
-             if (stats != null) {
-                 updateAction(stats);
-             } else {
-                 Debug.LogWarning($"[MatchEventHandler] Could not find stats object for TeamSimId {teamSimId} to increment stat.");
-             }
-        }
-
-        // --- Specific Event Handlers ---
 
         /// <summary>Handles successful actions like completed passes, shots taken, tackles won.</summary>
         private void HandleActionSuccess(ActionResult result, MatchState state)
@@ -303,20 +247,28 @@ private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TI
         /// <summary>Handles a shot blocked by a field player.</summary>
         public void HandleBlock(ActionResult result, MatchState state)
         {
-    SimPlayer blocker = result.PrimaryPlayer;
-    SimPlayer shooter = result.SecondaryPlayer;
-    Vector2 impactPos = result.ImpactPosition ?? blocker?.Position ?? state.Ball.Position; // Best guess impact
+            SimPlayer blocker = result.PrimaryPlayer;
+            SimPlayer shooter = result.SecondaryPlayer;
+            Vector2 impactPos = result.ImpactPosition ?? blocker?.Position ?? state.Ball.Position; // Best guess impact
 
-    // Conditional jump logic for block
-    if (blocker?.BaseData != null && state != null && JumpDecisionUtils.ShouldJumpForBlock(blocker, state))
-    {
-        if (!blocker.BaseData.IsJumping)
-            blocker.BaseData.InitiateJump();
-    }
+            // Conditional jump logic for block
+            if (blocker != null && state != null && JumpDecisionUtils.ShouldJumpForBlock(blocker, state))
+            {
+                // Calculate vertical velocity based on Jumping attribute
+                float jumpingValue = Mathf.Clamp(blocker.BaseData.Jumping, 0f, 100f);
+                float verticalVelocity = Mathf.Lerp(
+                    SimConstants.MIN_JUMP_VERTICAL_VELOCITY,
+                    SimConstants.MAX_JUMP_VERTICAL_VELOCITY,
+                    jumpingValue / 100f
+                );
+                Vector2 jumpVelocity = new Vector2(0f, verticalVelocity); // Add horizontal if needed
+                _jumpSimulator.StartJump(blocker, jumpVelocity);
+            }
 
-    Log($"Shot by {shooter?.BaseData?.FullName ?? "Unknown"} blocked by {blocker.BaseData.FullName}!", blocker);
+            Log($"Shot by {shooter?.BaseData?.FullName ?? "Unknown"} blocked by {blocker.BaseData.FullName}!", blocker);
 
-    // --- Stat Updates ---
+            // --- Stat Updates ---
+            IncrementStat(state, blocker, stats => stats.BlocksMade++);
     IncrementStat(state, blocker, stats => stats.BlocksMade++);
             // ShotTaken already counted on release. Blocked shot is NOT ShotOnTarget.
 
@@ -561,8 +513,8 @@ private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TI
                 Vector3 dir3D;
                 if(gk != null) {
                     // Convert 2D player position to 3D direction vector
-                    Vector3 gkPos3D = new Vector3(gk.Position.x, SimConstants.BALL_DEFAULT_HEIGHT, gk.Position.y);
-                    dir3D = new Vector3(gkPos3D.x - goalCenter.x, 0f, gkPos3D.z - goalCenter.z);
+                    Vector3 gkPos3D = new(gk.Position.x, SimConstants.BALL_DEFAULT_HEIGHT, gk.Position.y);
+                    dir3D = new(gkPos3D.x - goalCenter.x, 0f, gkPos3D.z - goalCenter.z);
                     
                     // Check if direction is near zero
                     if(dir3D.sqrMagnitude < SimConstants.VELOCITY_NEAR_ZERO_SQ) {

@@ -1,6 +1,8 @@
 using HandballManager.Simulation.Engines;
 using HandballManager.Simulation.Utils;
+using HandballManager.Simulation.Physics;
 using UnityEngine;
+using HandballManager.Core;
 
 namespace HandballManager.Simulation.Events.Calculators
 {
@@ -10,6 +12,13 @@ namespace HandballManager.Simulation.Events.Calculators
     public class ShotCalculator
     {
         private readonly BlockCalculator _blockCalculator;
+        private readonly JumpSimulator _jumpSimulator;
+
+        public ShotCalculator(BlockCalculator blockCalculator, JumpSimulator jumpSimulator)
+        {
+            _blockCalculator = blockCalculator ?? throw new System.ArgumentNullException(nameof(blockCalculator));
+            _jumpSimulator = jumpSimulator ?? throw new System.ArgumentNullException(nameof(jumpSimulator));
+        }
 
         public ShotCalculator(BlockCalculator blockCalculator)
         {
@@ -23,8 +32,16 @@ namespace HandballManager.Simulation.Events.Calculators
             // Conditional jump logic
             if (shooter?.BaseData != null && state != null && JumpDecisionUtils.ShouldJumpForShot(shooter, state, evaluator))
             {
-                if (!shooter.BaseData.IsJumping)
-                    shooter.BaseData.InitiateJump();
+                // Calculate vertical velocity based on Jumping attribute
+                float jumpingValue = Mathf.Clamp(shooter.BaseData.Jumping, 0f, 100f);
+                float verticalVelocity = Mathf.Lerp(
+                    SimConstants.MIN_JUMP_VERTICAL_VELOCITY,
+                    SimConstants.MAX_JUMP_VERTICAL_VELOCITY,
+                    jumpingValue / 100f
+                );
+                // Use the shot direction's X/Z for horizontal, verticalVelocity for Y
+                Vector2 jumpVelocity = new Vector2(0f, verticalVelocity); // If you want to add horizontal, use actualDirection3D.x/z
+                _jumpSimulator.StartJump(shooter, jumpVelocity);
             }
 
             if (shooter?.BaseData is null || state is null)

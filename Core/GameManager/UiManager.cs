@@ -3,9 +3,10 @@ using UnityEngine.UI; // Required for basic UI components like Button, Text
 using TMPro; // Required if using TextMeshPro components
 using HandballManager.Data; // To understand data types being shown
 using HandballManager.Core; // For GameState access potentially
+using HandballManager.Core.GameManager; // Added using directive for GameManager
 using System; // For DateTime formatting
 
-namespace HandballManager.UI
+namespace HandballManager.Core.GameManager
 {
     /// <summary>
     /// Singleton UI Manager responsible for controlling UI panels, navigation,
@@ -15,6 +16,7 @@ namespace HandballManager.UI
     public class UIManager : MonoBehaviour
     {
         // --- Singleton Instance ---
+
         private static UIManager _instance;
         public static UIManager Instance
         {
@@ -22,7 +24,7 @@ namespace HandballManager.UI
             {
                 if (_instance == null)
                 {
-                    _instance = FindObjectOfType<UIManager>();
+                    _instance = FindFirstObjectByType<UIManager>();
                     if (_instance == null)
                     {
                         // Optionally create one if it doesn't exist, but usually UI is scene-specific
@@ -110,7 +112,7 @@ namespace HandballManager.UI
          private void Update()
          {
              // Update UI elements that change frequently (like date)
-             if (dateText != null && GameManager.Instance?.TimeManager != null)
+             if (dateText != null && GameManager.Instance != null && GameManager.Instance.TimeManager != null)
              {
                  dateText.text = GameManager.Instance.TimeManager.CurrentDate.ToString("dddd, dd MMMM yyyy");
              }
@@ -305,25 +307,29 @@ namespace HandballManager.UI
          public void OnNewGameButtonClicked()
          {
              Debug.Log("New Game button clicked.");
-             GameManager.Instance?.StartNewGame();
+             if (GameManager.Instance != null)
+             GameManager.Instance.StartNewGame();
          }
 
          public void OnLoadGameButtonClicked()
          {
              Debug.Log("Load Game button clicked.");
-             GameManager.Instance?.LoadGame();
+             if (GameManager.Instance != null)
+             GameManager.Instance.LoadGame();
          }
 
           public void OnSaveGameButtonClicked()
          {
              Debug.Log("Save Game button clicked.");
-             GameManager.Instance?.SaveGame();
+             if (GameManager.Instance != null)
+             GameManager.Instance.SaveGame();
          }
 
          public void OnContinueButtonClicked() // Example for advancing time
          {
               Debug.Log("Continue button clicked.");
-              GameManager.Instance?.AdvanceTime();
+              if (GameManager.Instance != null)
+    GameManager.Instance.AdvanceTime();
          }
 
           public void OnQuitButtonClicked()

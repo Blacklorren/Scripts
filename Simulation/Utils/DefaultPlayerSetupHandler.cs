@@ -112,11 +112,11 @@ public class DefaultPlayerSetupHandler : IPlayerSetupHandler
 
             // Separate available (not injured) players
             var candidates = teamPlayers
-                .Where(p => !p.BaseData.IsInjured())
+                .Where(p => !p.BaseData.IsInjured(DateTime.Now))
                 .ToList();
 
             // Add injured players directly to bench
-            bench.AddRange(teamPlayers.Where(p => p.BaseData.IsInjured()));
+            bench.AddRange(teamPlayers.Where(p => p.BaseData.IsInjured(DateTime.Now)));
 
             // Ensure GK selection
             var gk = candidates

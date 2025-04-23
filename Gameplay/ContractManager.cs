@@ -24,11 +24,12 @@ namespace HandballManager.Gameplay
         /// <param name="player">The player data for the player receiving the offer.</param>
         /// <param name="proposedWage">The weekly/monthly wage offered.</param>
         /// <param name="contractYears">The duration of the contract in years.</param>
+        /// <param name="currentDate">The current date.</param>
         /// <param name="signingBonus">Optional signing bonus.</param>
         /// <param name="agentFee">Optional fee paid to the player's agent.</param>
         // <param name="clauses">Optional: Dictionary of contract clauses (e.g., release clause).</param>
         /// <returns>A negotiation ID if offer initiated, -1 otherwise.</returns>
-        public int OfferContract(TeamData offeringTeam, PlayerData player, float proposedWage, int contractYears, float signingBonus = 0, float agentFee = 0)//, Dictionary<string, float> clauses = null)
+        public int OfferContract(TeamData offeringTeam, PlayerData player, float proposedWage, int contractYears, DateTime currentDate, float signingBonus = 0, float agentFee = 0)//, Dictionary<string, float> clauses = null)
         {
             if (offeringTeam == null || player == null)
             {
@@ -69,7 +70,7 @@ namespace HandballManager.Gameplay
             if (placeholderAccept) {
                  Debug.Log($"[ContractManager] Placeholder: Player {player.FullName} accepted the offer (pending finalization).");
                  // In a real system, you wouldn't finalize immediately. You'd wait for confirmation step.
-                 DateTime expiry = Core.GameManager.Instance.TimeManager.CurrentDate.AddYears(contractYears);
+                 DateTime expiry = currentDate.AddYears(contractYears);
                  FinalizeContract(offeringTeam, player, proposedWage, expiry, signingBonus, agentFee);
             } else {
                  Debug.Log($"[ContractManager] Placeholder: Player {player.FullName} rejected the offer.");

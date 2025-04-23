@@ -16,7 +16,7 @@ namespace HandballManager.Gameplay
         /// </summary>
         public static Tactic Default { get; } = new Tactic();
         public string TacticName { get; set; } = "Default Tactic";
-        public Guid TacticID { get; private set; } = Guid.NewGuid(); // Unique ID for saving/loading specific tactics
+        public Guid TacticID { get; set; } = Guid.NewGuid(); // Unique ID for saving/loading specific tactics
 
         // --- Core Formations ---
         /// <summary>Formation used during offensive phases. Could be enum or struct later.</summary>

@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using HandballManager.Data; // For TeamData
-using HandballManager.Core.MatchData; // For MatchInfo struct
+using HandballManager.Data; // For TeamData, LeagueStandingEntry, HeadToHeadRecord, PlayerSeasonStats, HeadToHeadResult
+using HandballManager.Data; // For HandballManager.Data.MatchInfo struct
 using UnityEngine;
 
 namespace HandballManager.Management
@@ -15,7 +15,7 @@ namespace HandballManager.Management
     {
         // Stores the generated schedule. Key is LeagueID or CompetitionID.
         // Value is a list of all matches for that competition.
-        private Dictionary<int, List<MatchInfo>> _schedules = new Dictionary<int, List<MatchInfo>>();
+        private Dictionary<int, List<HandballManager.Data.MatchInfo>> _schedules = new Dictionary<int, List<HandballManager.Data.MatchInfo>>();
         private bool _scheduleGenerated = false; // Flag to track if schedule has been generated
 
         // Constants for schedule generation
@@ -26,21 +26,20 @@ namespace HandballManager.Management
         /// Generates a new schedule for all known leagues/teams.
         /// Creates a round-robin schedule for each league in the game.
         /// </summary>
-        public void GenerateNewSchedule()
+        public void GenerateNewSchedule(List<TeamData> allTeams, DateTime startDate)
         {
             Debug.Log("[ScheduleManager] Generating new schedule...");
             _schedules.Clear();
             _scheduleGenerated = false;
 
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager == null || gameManager.AllTeams == null)
+            if (allTeams == null)
             {
-                Debug.LogError("[ScheduleManager] Cannot generate schedule - GameManager or Team List not available.");
+                Debug.LogError("[ScheduleManager] Cannot generate schedule - Team List not available.");
                 return;
             }
 
             // Get all leagues with teams
-            var leagueIds = gameManager.AllTeams
+            var leagueIds = allTeams
                 .Where(t => t.LeagueID.HasValue)
                 .Select(t => t.LeagueID.Value)
                 .Distinct()
@@ -55,7 +54,7 @@ namespace HandballManager.Management
             // Generate schedule for each league
             foreach (int leagueId in leagueIds)
             {
-                GenerateLeagueSchedule(leagueId, gameManager);
+                GenerateLeagueSchedule(leagueId, allTeams, startDate);
             }
 
             _scheduleGenerated = true;
@@ -68,11 +67,12 @@ namespace HandballManager.Management
         /// Generates a round-robin schedule for a specific league.
         /// </summary>
         /// <param name="leagueId">The ID of the league to generate a schedule for.</param>
-        /// <param name="gameManager">Reference to the game manager.</param>
-        private void GenerateLeagueSchedule(int leagueId, HandballManager.Core.GameManager gameManager)
+        /// <param name="allTeams">List of all teams in the game.</param>
+        /// <param name="startDate">The date to start scheduling from.</param>
+        private void GenerateLeagueSchedule(int leagueId, List<TeamData> allTeams, DateTime startDate)
         {
             // Get teams in this league
-            List<TeamData> teamsInLeague = gameManager.AllTeams
+            List<TeamData> teamsInLeague = allTeams
                 .Where(t => t.LeagueID.HasValue && t.LeagueID.Value == leagueId)
                 .ToList();
 
@@ -82,8 +82,7 @@ namespace HandballManager.Management
                 return;
             }
 
-            List<MatchInfo> leagueSchedule = new List<MatchInfo>();
-            DateTime startDate = gameManager.TimeManager.CurrentDate; // Start scheduling from current date
+            List<HandballManager.Data.MatchInfo> leagueSchedule = new List<HandballManager.Data.MatchInfo>();
 
             // Ensure start date is a typical match day
             while (startDate.DayOfWeek != DEFAULT_MATCH_DAY)
@@ -122,7 +121,7 @@ namespace HandballManager.Management
                         TeamData home = isReturnLeg ? team2 : team1;
                         TeamData away = isReturnLeg ? team1 : team2;
 
-                        leagueSchedule.Add(new MatchInfo
+                        leagueSchedule.Add(new HandballManager.Data.MatchInfo
                         {
                             Date = currentMatchDate,
                             HomeTeamID = home.TeamID,
@@ -151,10 +150,10 @@ namespace HandballManager.Management
         /// Gets all matches scheduled for a specific date across all competitions.
         /// </summary>
         /// <param name="date">The date to check.</param>
-        /// <returns>A list of MatchInfo objects for that date.</returns>
-        public List<MatchInfo> GetMatchesForDate(DateTime date)
+        /// <returns>A list of HandballManager.Data.MatchInfo objects for that date.</returns>
+        public List<HandballManager.Data.MatchInfo> GetMatchesForDate(DateTime date)
         {
-            List<MatchInfo> matchesOnDate = new List<MatchInfo>();
+            List<HandballManager.Data.MatchInfo> matchesOnDate = new List<HandballManager.Data.MatchInfo>();
             DateTime targetDate = date.Date; // Compare dates only
 
             if (!_scheduleGenerated)
@@ -179,8 +178,9 @@ namespace HandballManager.Management
         /// </summary>
         /// <param name="postponedMatch">The match info to reschedule.</param>
         /// <param name="newDate">The proposed new date for the match.</param>
+        /// <param name="currentDate">The current date to check against.</param>
         /// <returns>True if rescheduling was successful, false otherwise.</returns>
-        public bool HandleRescheduling(MatchInfo postponedMatch, DateTime newDate)
+        public bool HandleRescheduling(HandballManager.Data.MatchInfo postponedMatch, DateTime newDate, DateTime currentDate)
         {
             Debug.Log($"[ScheduleManager] Rescheduling match {postponedMatch.HomeTeamID} vs {postponedMatch.AwayTeamID} to {newDate.ToShortDateString()}.");
 
@@ -188,8 +188,7 @@ namespace HandballManager.Management
             DateTime targetDate = newDate.Date;
 
             // Check if the new date is valid (not in the past)
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            if (gameManager != null && targetDate < gameManager.TimeManager.CurrentDate)
+            if (targetDate < currentDate.Date)
             {
                 Debug.LogWarning($"[ScheduleManager] Cannot reschedule to a date in the past: {targetDate.ToShortDateString()}");
                 return false;
@@ -197,18 +196,18 @@ namespace HandballManager.Management
 
             // Find the match in the schedule
             bool matchFound = false;
-            MatchInfo updatedMatch = postponedMatch;
+            HandballManager.Data.MatchInfo updatedMatch = postponedMatch;
             updatedMatch.Date = targetDate;
 
             foreach (var kvp in _schedules)
             {
                 int leagueId = kvp.Key;
-                List<MatchInfo> leagueSchedule = kvp.Value;
+                List<HandballManager.Data.MatchInfo> leagueSchedule = kvp.Value;
 
                 // Find the match in this league's schedule
                 for (int i = 0; i < leagueSchedule.Count; i++)
                 {
-                    MatchInfo match = leagueSchedule[i];
+                    HandballManager.Data.MatchInfo match = leagueSchedule[i];
                     if (match.HomeTeamID == postponedMatch.HomeTeamID &&
                         match.AwayTeamID == postponedMatch.AwayTeamID &&
                         match.Date.Date == postponedMatch.Date.Date)
@@ -247,10 +246,10 @@ namespace HandballManager.Management
         /// <param name="leagueId">The league ID to check.</param>
         /// <param name="match">The match to check for conflicts.</param>
         /// <returns>True if there is a conflict, false otherwise.</returns>
-        private bool CheckForMatchConflicts(int leagueId, MatchInfo match)
+        private bool CheckForMatchConflicts(int leagueId, HandballManager.Data.MatchInfo match)
         {
             // Get all matches on the same date
-            List<MatchInfo> matchesOnDate = GetMatchesForDate(match.Date);
+            List<HandballManager.Data.MatchInfo> matchesOnDate = GetMatchesForDate(match.Date);
 
             // Check if either team is already playing on this date
             return matchesOnDate.Any(m =>
@@ -279,37 +278,42 @@ namespace HandballManager.Management
         /// <param name="startDate">The date to start looking from (defaults to current date).</param>
         /// <param name="maxMatches">Maximum number of matches to return.</param>
         /// <returns>A list of upcoming matches for the specified team.</returns>
-        public List<MatchInfo> GetUpcomingMatchesForTeam(int teamId, DateTime? startDate = null, int maxMatches = 5)
+        /// <summary>
+/// Gets upcoming matches for a specific team.
+/// </summary>
+/// <param name="teamId">The team ID to find matches for.</param>
+/// <param name="currentDate">The date to start looking from (required).</param>
+/// <param name="maxMatches">Maximum number of matches to return.</param>
+/// <returns>A list of upcoming matches for the specified team.</returns>
+public List<HandballManager.Data.MatchInfo> GetUpcomingMatchesForTeam(int teamId, DateTime currentDate, int maxMatches = 5)
+{
+    if (!_scheduleGenerated)
+    {
+        return new List<HandballManager.Data.MatchInfo>();
+    }
+
+    DateTime searchDate = currentDate.Date;
+    List<HandballManager.Data.MatchInfo> upcomingMatches = new List<HandballManager.Data.MatchInfo>();
+
+    // Search through all leagues
+    foreach (var kvp in _schedules)
+    {
+        // Find matches where this team is playing (home or away) and the date is in the future
+        var teamMatches = kvp.Value
+            .Where(m => (m.HomeTeamID == teamId || m.AwayTeamID == teamId) && m.Date.Date >= searchDate)
+            .OrderBy(m => m.Date)
+            .Take(maxMatches - upcomingMatches.Count);
+
+        upcomingMatches.AddRange(teamMatches);
+
+        if (upcomingMatches.Count >= maxMatches)
         {
-            if (!_scheduleGenerated)
-            {
-                return new List<MatchInfo>();
-            }
-
-            var gameManager = HandballManager.Core.GameManager.Instance;
-            DateTime searchDate = startDate ?? gameManager?.TimeManager.CurrentDate ?? DateTime.Now;
-
-            List<MatchInfo> upcomingMatches = new List<MatchInfo>();
-
-            // Search through all leagues
-            foreach (var kvp in _schedules)
-            {
-                // Find matches where this team is playing (home or away) and the date is in the future
-                var teamMatches = kvp.Value
-                    .Where(m => (m.HomeTeamID == teamId || m.AwayTeamID == teamId) && m.Date.Date >= searchDate.Date)
-                    .OrderBy(m => m.Date)
-                    .Take(maxMatches - upcomingMatches.Count);
-
-                upcomingMatches.AddRange(teamMatches);
-
-                if (upcomingMatches.Count >= maxMatches)
-                {
-                    break;
-                }
-            }
-
-            return upcomingMatches.OrderBy(m => m.Date).Take(maxMatches).ToList();
+            break;
         }
+    }
+
+    return upcomingMatches.OrderBy(m => m.Date).Take(maxMatches).ToList();
+}
 
         /// <summary>
         /// Finds the next available date for a match that doesn't conflict with existing matches.
@@ -335,7 +339,7 @@ namespace HandballManager.Management
             while (!foundValidDate && iterations < maxIterations)
             {
                 // Get all matches on this date
-                List<MatchInfo> matchesOnDate = GetMatchesForDate(candidateDate);
+                List<HandballManager.Data.MatchInfo> matchesOnDate = GetMatchesForDate(candidateDate);
 
                 // Check if any of our teams are already playing on this date
                 bool hasConflict = matchesOnDate.Any(m =>
@@ -360,16 +364,16 @@ namespace HandballManager.Management
         /// Gets all schedules data for saving.
         /// </summary>
         /// <returns>The schedule dictionary for serialization.</returns>
-        public Dictionary<int, List<MatchInfo>> GetSchedulesForSave()
+        public Dictionary<int, List<HandballManager.Data.MatchInfo>> GetSchedulesForSave()
         {
-            return new Dictionary<int, List<MatchInfo>>(_schedules);
+            return new Dictionary<int, List<HandballManager.Data.MatchInfo>>(_schedules);
         }
 
         /// <summary>
         /// Restores schedules from saved data.
         /// </summary>
         /// <param name="savedSchedules">The saved schedule data.</param>
-        public void RestoreSchedulesFromSave(Dictionary<int, List<MatchInfo>> savedSchedules)
+        public void RestoreSchedulesFromSave(Dictionary<int, List<HandballManager.Data.MatchInfo>> savedSchedules)
         {
             if (savedSchedules == null || savedSchedules.Count == 0)
             {
@@ -377,7 +381,7 @@ namespace HandballManager.Management
                 return;
             }
 
-            _schedules = new Dictionary<int, List<MatchInfo>>(savedSchedules);
+            _schedules = new Dictionary<int, List<HandballManager.Data.MatchInfo>>(savedSchedules);
             _scheduleGenerated = true;
             Debug.Log($"[ScheduleManager] Restored {_schedules.Count} league schedules.");
         }
