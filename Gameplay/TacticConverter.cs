@@ -15,7 +15,9 @@ namespace HandballManager.Gameplay
             {
                 TacticID = tactic.TacticID,
                 Name = tactic.TacticName,
-                Type = tactic.OffensiveFormation, // Peut être adapté selon besoin
+                Type = tactic.OffensiveFormationName, // Store formation names
+                OffensiveFormationName = tactic.OffensiveFormationData.Name,
+                DefensiveFormationName = tactic.DefensiveFormationData.Name,
                 Description = $"DefSys: {tactic.DefensiveSystem}, Pace: {tactic.Pace}"
                 // Ajouter d'autres propriétés si besoin
             };
@@ -28,9 +30,17 @@ namespace HandballManager.Gameplay
             {
                 TacticID = data.TacticID,
                 TacticName = data.Name,
-                OffensiveFormation = data.Type, // Peut être adapté selon besoin
-                // DefensiveSystem, Pace, etc. peuvent être extraits de Description ou par extension
+                OffensiveFormation = data.OffensiveFormationName,
+                DefensiveSystem = DefensiveSystem.SixZero, // Default, actual system should be set or parsed
+                OffensiveFormationData = LoadFormationData(data.OffensiveFormationName),
+                DefensiveFormationData = LoadFormationData(data.DefensiveFormationName)
             };
+        }
+
+        private static FormationData LoadFormationData(string name)
+        {
+            // TODO: implement loading logic from ScriptableObject or JSON
+            return new FormationData { Name = name };
         }
     }
 }

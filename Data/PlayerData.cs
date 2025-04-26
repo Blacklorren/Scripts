@@ -31,6 +31,44 @@ namespace HandballManager.Data
     [Serializable]
     public class PlayerData
     {
+        // --- Personality Attributes (0-100) ---
+        /// <summary>
+        /// Player's ambition (0-100). Higher means more driven to achieve.
+        /// </summary>
+        public int Ambition { get; set; } = 50;
+        /// <summary>
+        /// Player's determination (0-100). Higher means more persistent.
+        /// </summary>
+        public int Determination { get; set; } = 50;
+        /// <summary>
+        /// Player's aggression (0-100). Higher means more combative.
+        /// </summary>
+        public int Aggression { get; set; } = 50;
+        /// <summary>
+        /// Player's volatility (0-100). Higher means more prone to mood swings.
+        /// </summary>
+        public int Volatility { get; set; } = 50;
+        /// <summary>
+        /// Player's professionalism (0-100). Higher means more disciplined.
+        /// </summary>
+        public int Professionalism { get; set; } = 50;
+        /// <summary>
+        /// Player's loyalty (0-100). Higher means more loyal to team/club.
+        /// </summary>
+        public int Loyalty { get; set; } = 50;
+        /// <summary>
+        /// Player's composure (0-100). Higher means more calm under pressure.
+        /// </summary>
+        public int Composure { get; set; } = 50;
+        /// <summary>
+        /// Player's leadership (0-100). Higher means more likely to lead others.
+        /// </summary>
+        public int Leadership { get; set; } = 50;
+        /// <summary>
+        /// Player's teamwork (0-100). Higher means more likely to cooperate.
+        /// </summary>
+        public int Teamwork { get; set; } = 50;
+
         /// <summary>
         /// Player's reaction attribute (0-100). Determines response speed in critical moments.
         /// </summary>
@@ -53,6 +91,29 @@ namespace HandballManager.Data
 
         // --- Base Attributes ---
         public BaseData BaseData { get; private set; }
+
+        // Nouveau constructeur pour initialisation sécurisée de BaseData
+        public PlayerData(BaseData baseData)
+        {
+            BaseData = baseData;
+            // Initialisation supplémentaire si besoin
+            // (copier le contenu du constructeur par défaut si nécessaire)
+        }
+
+        /// <summary>
+        /// Vision (0-100). Proxy vers BaseData.Vision. Sert à la perception des ouvertures et la réussite des passes difficiles.
+        /// </summary>
+        public int Vision => BaseData?.Vision ?? 50;
+
+        /// <summary>
+        /// Creativity (0-100). Proxy vers BaseData.Creativity. Sert à modéliser l'originalité et l'imprévisibilité.
+        /// </summary>
+        public int Creativity => BaseData?.Creativity ?? 50;
+
+        /// <summary>
+        /// Tactical Awareness (0-100). Proxy vers BaseData.TacticalAwareness. Sert à l'évaluation tactique du joueur.
+        /// </summary>
+        public int TacticalAwareness => BaseData?.TacticalAwareness ?? 50;
 
         // --- Jumping Mechanics ---
         public bool IsJumping { get; private set; } = false;
@@ -199,18 +260,13 @@ namespace HandballManager.Data
 
         // --- Mental Attributes (Scale 1-100) ---
         [Header("Mental")]
-        [Range(1, 100)] public int Aggression { get; set; } = 50; // Willingness to engage physically (defense/attack) - can be good/bad
         [Range(1, 100)] public int Bravery { get; set; } = 50; // Willingness to risk injury (block shots, contest headers)
-        [Range(1, 100)] public int Composure { get; set; } = 50; // Ability to perform under pressure
         [Range(1, 100)] public int Concentration { get; set; } = 50; // Maintaining focus throughout match
         [Range(1, 100)] public int Anticipation { get; set; } = 50; // Reading the game, predicting opponent actions
         [Range(1, 100)] public int DecisionMaking { get; set; } = 50; // Choosing the right action (pass, shoot, defend etc.)
-        [Range(1, 100)] public int Teamwork { get; set; } = 50; // Playing well with teammates, following tactics
         [Range(1, 100)] public int WorkRate { get; set; } = 50; // Willingness to exert effort off the ball
-        [Range(1, 100)] public int Leadership { get; set; } = 50; // Ability to influence teammates positively
         [Range(1, 100)] public int Positioning { get; set; } = 50; // Defensive positioning sense for field players
-        [Range(1, 100)] public int Determination { get; set; } = 50; // Added: Mental strength and perseverance
-
+        
         // --- Goalkeeping Attributes (Scale 1-100) - Only relevant for Goalkeepers ---
         [Header("Goalkeeping")]
         [Range(1, 100)] public int Reflexes { get; set; } = 20; // Reaction speed to shots
@@ -446,6 +502,26 @@ namespace HandballManager.Data
             if (Determination > 80) {
                 weights[PlayerPersonalityTrait.Determined] += 15f;
                 weights[PlayerPersonalityTrait.Lazy] -= 4f;
+            }
+            // Aggression
+            if (Aggression > 80) {
+                weights[PlayerPersonalityTrait.Aggressive] += 15f;
+                weights[PlayerPersonalityTrait.Professional] -= 4f;
+            }
+            // Composure
+            if (Composure > 80) {
+                weights[PlayerPersonalityTrait.Professional] += 15f;
+                weights[PlayerPersonalityTrait.Volatile] -= 4f;
+            }
+            // Leadership
+            if (Leadership > 80) {
+                weights[PlayerPersonalityTrait.Leader] += 15f;
+                weights[PlayerPersonalityTrait.Lazy] -= 4f;
+            }
+            // Teamwork
+            if (Teamwork > 80) {
+                weights[PlayerPersonalityTrait.Loyal] += 15f;
+                weights[PlayerPersonalityTrait.Ambitious] -= 4f;
             }
 
             // Position-based adjustments

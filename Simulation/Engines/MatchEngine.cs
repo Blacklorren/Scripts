@@ -407,7 +407,6 @@ namespace HandballManager.Simulation.Engines
                     LookDirection = simPlayer.LookDirection,
                     HasBall = simPlayer.HasBall,
                     Stamina = simPlayer.Stamina,
-                    CurrentFatigue = simPlayer.CurrentFatigue,
                     IsOnCourt = simPlayer.IsOnCourt,
                     SuspensionTimer = simPlayer.SuspensionTimer,
                     IsJumping = simPlayer.IsJumping,

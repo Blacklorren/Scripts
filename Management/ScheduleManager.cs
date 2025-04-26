@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using HandballManager.Data; // For TeamData, LeagueStandingEntry, HeadToHeadRecord, PlayerSeasonStats, HeadToHeadResult
-using HandballManager.Data; // For HandballManager.Data.MatchInfo struct
 using UnityEngine;
 
 namespace HandballManager.Management
@@ -91,11 +90,9 @@ namespace HandballManager.Management
             }
 
             // Add dummy team if odd number for round robin
-            bool addedDummy = false;
             if (teamsInLeague.Count % 2 != 0)
             {
                 teamsInLeague.Add(null); // Null represents a bye
-                addedDummy = true;
             }
 
             int numTeams = teamsInLeague.Count;

@@ -101,7 +101,7 @@ namespace HandballManager.Simulation.Events.Calculators
             float successChance = ActionResolverConstants.BASE_TACKLE_SUCCESS;
             float foulChance = ActionResolverConstants.BASE_TACKLE_FOUL_CHANCE;
 
-            // Attributes
+            // Attributes principaux
             float tacklerSkill = (tackler.BaseData.Tackling * ActionResolverConstants.TACKLE_SKILL_WEIGHT_TACKLING +
                                   tackler.BaseData.Strength * ActionResolverConstants.TACKLE_SKILL_WEIGHT_STRENGTH +
                                   tackler.BaseData.Anticipation * ActionResolverConstants.TACKLE_SKILL_WEIGHT_ANTICIPATION);
@@ -109,6 +109,18 @@ namespace HandballManager.Simulation.Events.Calculators
                                  target.BaseData.Agility * ActionResolverConstants.TARGET_SKILL_WEIGHT_AGILITY +
                                  target.BaseData.Strength * ActionResolverConstants.TARGET_SKILL_WEIGHT_STRENGTH +
                                  target.BaseData.Composure * ActionResolverConstants.TARGET_SKILL_WEIGHT_COMPOSURE);
+
+            // --- Stamina & WorkRate du tackleur : réduisent la pénalité de fatigue sur la réussite du tacle ---
+            float staminaMod = Mathf.Lerp(0.95f, 1.0f, tackler.BaseData.Stamina / 100f); // max +5%
+            float workRateMod = Mathf.Lerp(0.97f, 1.0f, tackler.BaseData.WorkRate / 100f); // max +3%
+            // --- Determination du tackleur : bonus subtil sur la réussite ---
+            float determinationMod = Mathf.Lerp(0.97f, 1.0f, tackler.BaseData.Determination / 100f); // max +3%
+            // --- Positioning du tackleur : réduit le risque de faute et augmente légèrement la réussite ---
+            float positioningMod = Mathf.Lerp(0.97f, 1.0f, tackler.BaseData.Positioning / 100f); // max +3%
+            // --- DecisionMaking du tackleur : réduit le risque de faute ---
+            float decisionMod = Mathf.Lerp(1.0f, 0.97f, tackler.BaseData.DecisionMaking / 100f); // max -3% faute
+            // --- Resilience du tackleur : réduit la pénalité de fatigue sur la réussite ---
+            float resilienceMod = Mathf.Lerp(0.96f, 1.0f, tackler.BaseData.Resilience / 100f); // max +4%
 
             float ratio = tacklerSkill / Mathf.Max(ActionResolverConstants.MIN_TACKLE_TARGET_SKILL_DENOMINATOR, targetSkill);
             successChance *= Mathf.Clamp(1.0f + (ratio - 1.0f) * ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING,
@@ -119,6 +131,17 @@ namespace HandballManager.Simulation.Events.Calculators
             foulChance *= Mathf.Clamp(1.0f + (foulSkillRatio - 1.0f) * ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD,
                                       1.0f - ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD * 0.5f,
                                       1.0f + ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD);
+
+            // Application des modificateurs subtils
+            successChance *= staminaMod * workRateMod * determinationMod * positioningMod * resilienceMod;
+            foulChance *= decisionMod * (2f - positioningMod); // positioningMod < 1 donc réduit la faute
+
+            // Documentation attributs secondaires :
+            // - Stamina/WorkRate : réduisent la pénalité de fatigue
+            // - Determination : bonus subtil réussite
+            // - Positioning : réduit faute et augmente réussite
+            // - DecisionMaking : réduit faute
+            // - Resilience : réduit impact fatigue
 
             // Situationals
             foulChance *= Mathf.Lerp(ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MIN, ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MAX, tackler.BaseData.Aggression / 100f);

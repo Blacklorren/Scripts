@@ -24,4 +24,6 @@ How to Use:
 
     Check Console: Observe the output in the Unity Console window (Window -> General -> Console). You'll see the start/end logs and the MatchResult details. For batch simulations, you'll get aggregate statistics.
 
-Now you can easily tweak the probabilities and logic within MatchEngine.cs, re-compile, enter Play Mode, and run tests using the Inspector context menu to see how your changes affect the simulation outcomes, allowing for much faster iteration and balancing.
+Now you can easily tweak the probabilities and logic within MatchEngine.cs, re-compile, enter Play Mode, and run tests using the Inspector context menu to see how your changes affect the simulation outcomes, allowing for much faster iteration and balancing
+
+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.

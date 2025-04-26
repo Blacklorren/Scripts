@@ -60,7 +60,15 @@ namespace HandballManager.Simulation.Events.Finalizers
              // Enforce score consistency
              result.HomeStats.GoalsScored = result.HomeScore;
              result.AwayStats.GoalsScored = result.AwayScore;
-             
+
+             // Copie les statistiques individuelles des joueurs
+             if (state.PlayerStats != null && state.PlayerStats.Count > 0)
+             {
+                 foreach (var kvp in state.PlayerStats)
+                 {
+                     result.PlayerPerformances[kvp.Key] = kvp.Value;
+                 }
+             }
              // Final Validation (now should never trigger)
              Debug.Assert(result.HomeScore == result.HomeStats.GoalsScored, "Home score mismatch");
              Debug.Assert(result.AwayScore == result.AwayStats.GoalsScored, "Away score mismatch");

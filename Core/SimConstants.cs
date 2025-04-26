@@ -77,5 +77,10 @@ namespace HandballManager.Core
         // --- Pitch Dimensions ---
         public const float DEFAULT_PITCH_LENGTH = 40.0f;
         public const float DEFAULT_PITCH_WIDTH = 20.0f;
+
+        // --- Stumble Mechanics ---
+        public const float STUMBLE_DURATION = 0.5f;              // seconds players remain stumbling after a collision
+        public const float STUMBLE_ACCELERATION_FACTOR = 0.5f;    // fraction of normal accel when stumbling
+        public const float STUMBLE_SPEED_FACTOR = 0.5f;           // fraction of normal speed when stumbling
     }
 }

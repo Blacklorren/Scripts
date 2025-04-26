@@ -37,6 +37,18 @@ namespace HandballManager.Simulation.Events.Calculators
                                    defender.BaseData.Positioning * ActionResolverConstants.INTERCEPTION_SKILL_WEIGHT_POSITIONING);
             float skillMod = Mathf.Lerp(ActionResolverConstants.INTERCEPTION_SKILL_MIN_MOD, ActionResolverConstants.INTERCEPTION_SKILL_MAX_MOD, defenderSkill / 100f);
 
+            // --- Modificateurs secondaires (subtils) ---
+            // WorkRate : bonus subtil pour les efforts répétés
+            float workRateMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.WorkRate / 100f); // max +3%
+            // Stamina : réduit la pénalité de fatigue
+            float staminaMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Stamina / 100f); // max +3%
+            // Determination : bonus subtil sur l'interception
+            float determinationMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Determination / 100f); // max +3%
+            // Resilience : réduit l'impact de la fatigue
+            float resilienceMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Resilience / 100f); // max +3%
+            // DecisionMaking : bonus subtil sur la réussite
+            float decisionMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.DecisionMaking / 100f); // max +3%
+
             // Position
             float distToLine = SimulationUtils.CalculateDistanceToLine(defender.Position, CoordinateUtils.To2DGround(ball.PassOrigin), ball.IntendedTarget.Position); // Use helpers
             float lineProximityFactor = Mathf.Clamp01(1.0f - (distToLine / ActionResolverConstants.INTERCEPTION_RADIUS));
@@ -64,7 +76,15 @@ namespace HandballManager.Simulation.Events.Calculators
                               * Mathf.Lerp(1.0f, skillMod, ActionResolverConstants.INTERCEPTION_ATTRIBUTE_WEIGHT)
                               * Mathf.Lerp(1.0f, lineProximityFactor * ballProximityFactor, ActionResolverConstants.INTERCEPTION_POSITION_WEIGHT)
                               * passProgressFactor
-                              * ballSpeedFactor;
+                              * ballSpeedFactor
+                              * workRateMod * staminaMod * determinationMod * resilienceMod * decisionMod;
+
+            // Documentation attributs secondaires :
+            // - WorkRate : bonus subtil sur interception répétée
+            // - Stamina : réduit pénalité fatigue
+            // - Determination : bonus subtil
+            // - Resilience : réduit impact fatigue
+            // - DecisionMaking : bonus subtil
 
             // Movement Direction
             if (defender.Velocity.sqrMagnitude > 1f) {
@@ -77,15 +97,15 @@ namespace HandballManager.Simulation.Events.Calculators
             float awareness = CalculatePlayerAwareness(defender, ball);
             finalChance *= Mathf.Lerp(ActionResolverConstants.AWARENESS_MIN_FACTOR, ActionResolverConstants.AWARENESS_MAX_FACTOR, awareness);
 
-            // --- Fatigue Penalty ---
+            // --- Stamina Penalty (fatigue = 1 - Stamina) ---
             if (ActionResolverConstants.INTERCEPTION_FATIGUE_MAX_EFFECT > 0)
             {
                 float fatigueEffect = Mathf.Lerp(ActionResolverConstants.INTERCEPTION_FATIGUE_MIN_EFFECT,
                     ActionResolverConstants.INTERCEPTION_FATIGUE_MAX_EFFECT,
-                    defender.CurrentFatigue);
+                    1f - defender.Stamina);
                 finalChance *= (1f - fatigueEffect);
                 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Debug.Log($"[Fatigue] Defender {defender.BaseData?.FullName} fatigue: {defender.CurrentFatigue:F2}, effect: {fatigueEffect:F2}");
+                Debug.Log($"[Stamina] Defender {defender.BaseData?.FullName} stamina: {defender.Stamina:F2}, effect: {fatigueEffect:F2}");
                 #endif
             }
 
@@ -149,6 +169,13 @@ namespace HandballManager.Simulation.Events.Calculators
                                        ActionResolverConstants.PRE_PASS_SKILL_MAX_MOD, 
                                        defenderSkill / 100f);
 
+            // --- Modificateurs secondaires (subtils) ---
+            float workRateMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.WorkRate / 100f); // max +3%
+            float staminaMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Stamina / 100f); // max +3%
+            float determinationMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Determination / 100f); // max +3%
+            float resilienceMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.Resilience / 100f); // max +3%
+            float decisionMod = Mathf.Lerp(0.97f, 1.0f, defender.BaseData.DecisionMaking / 100f); // max +3%
+
             // Position factor - how close defender is to pass line
             Vector2 passStartPos = passer.Position;
             Vector2 passEndPos = target.Position;
@@ -169,7 +196,15 @@ namespace HandballManager.Simulation.Events.Calculators
                               * skillMod
                               * lineProximityFactor
                               * passerProximityFactor
-                              * awarenessModifier;
+                              * awarenessModifier
+                              * workRateMod * staminaMod * determinationMod * resilienceMod * decisionMod;
+
+            // Documentation attributs secondaires :
+            // - WorkRate : bonus subtil sur interception répétée
+            // - Stamina : réduit pénalité fatigue
+            // - Determination : bonus subtil
+            // - Resilience : réduit impact fatigue
+            // - DecisionMaking : bonus subtil
 
             finalChance = Mathf.Clamp01(finalChance);
 

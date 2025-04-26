@@ -18,11 +18,14 @@ namespace HandballManager.Gameplay
         public string TacticName { get; set; } = "Default Tactic";
         public Guid TacticID { get; set; } = Guid.NewGuid(); // Unique ID for saving/loading specific tactics
 
+
         // --- Core Formations ---
         /// <summary>Formation used during offensive phases. Could be enum or struct later.</summary>
         public string OffensiveFormation { get; set; } = "Standard Backcourt"; // Example string, could be more structured
+        public FormationData OffensiveFormationData { get; set; } = new FormationData();
         /// <summary>The primary defensive system employed.</summary>
         public DefensiveSystem DefensiveSystem { get; set; } = DefensiveSystem.SixZero;
+        public FormationData DefensiveFormationData { get; set; } = new FormationData();
 
         // --- General Team Instructions ---
         /// <summary>Speed at which the team builds up attacks.</summary>

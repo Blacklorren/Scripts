@@ -86,6 +86,40 @@ namespace HandballManager.Simulation.Physics
                     ball.Position += midVel * MatchSimulator.TIME_STEP_SECONDS;
                     ball.Velocity += acceleration * MatchSimulator.TIME_STEP_SECONDS;
 
+                    // Add collisions with posts and crossbar
+                    foreach (var goalCenter in new[] { _geometry.HomeGoalCenter3D, _geometry.AwayGoalCenter3D })
+                    {
+                        float halfWidth = _geometry.GoalWidth * 0.5f;
+                        foreach (var zOffset in new[] { -halfWidth, halfWidth })
+                        {
+                            Vector3 postBottom = new Vector3(goalCenter.x, 0f, goalCenter.z + zOffset);
+                            Vector3 postTop = new Vector3(goalCenter.x, _geometry.GoalHeight, goalCenter.z + zOffset);
+                            Vector3 closestPoint = ClosestPointOnLineSegment(postBottom, postTop, ball.Position);
+                            Vector3 diff = ball.Position - closestPoint;
+                            if (diff.sqrMagnitude <= SimConstants.BALL_RADIUS * SimConstants.BALL_RADIUS)
+                            {
+                                Vector3 normal = diff.normalized;
+                                Vector3 reflected = Vector3.Reflect(ball.Velocity, normal) * SimConstants.COEFFICIENT_OF_RESTITUTION;
+                                ball.Velocity = reflected;
+                                ball.Position = closestPoint + normal * SimConstants.BALL_RADIUS;
+                                Debug.Log("Hit Post");
+                                break;
+                            }
+                        }
+                        Vector3 barStart = new Vector3(goalCenter.x, _geometry.GoalHeight, goalCenter.z - halfWidth);
+                        Vector3 barEnd = new Vector3(goalCenter.x, _geometry.GoalHeight, goalCenter.z + halfWidth);
+                        Vector3 closestBar = ClosestPointOnLineSegment(barStart, barEnd, ball.Position);
+                        Vector3 diffBar = ball.Position - closestBar;
+                        if (diffBar.sqrMagnitude <= SimConstants.BALL_RADIUS * SimConstants.BALL_RADIUS)
+                        {
+                            Vector3 normal = diffBar.normalized;
+                            Vector3 reflected = Vector3.Reflect(ball.Velocity, normal) * SimConstants.COEFFICIENT_OF_RESTITUTION;
+                            ball.Velocity = reflected;
+                            ball.Position = closestBar + normal * SimConstants.BALL_RADIUS;
+                            Debug.Log("Hit Crossbar");
+                        }
+                    }
+
                     if (ball.Position.y <= SimConstants.BALL_RADIUS)
                     {
                         // Ball has hit the ground - handle bounce or transition to rolling
@@ -193,199 +227,209 @@ namespace HandballManager.Simulation.Physics
                 if (ball != null) ball.Stop();
             }
         }
-    
 
-    /// <summary>
-    /// Predicts ball impact point with goal line for specified defending team
-    /// </summary>
-    /// <param name="ball">The ball to predict impact for</param>
-    /// <param name="defendingTeamSimId">The team ID (0=Home, 1=Away) defending the goal line</param>
-    /// <returns>The 3D point where the ball trajectory intersects the goal line plane</returns>
-    /// <remarks>Returns a fallback position if calculation fails or ball is null</remarks>
-    public Vector3 EstimateBallGoalLineImpact3D(SimBall ball, int defendingTeamSimId)
-    {
-        if (ball == null) return Vector3.zero;
-        try
+        /// <summary>
+        /// Helper for goal collision detection
+        /// </summary>
+        private Vector3 ClosestPointOnLineSegment(Vector3 a, Vector3 b, Vector3 point)
         {
-            // Use constants from SimConstants class
-            float goalPlaneX = (defendingTeamSimId == SimConstants.HOME_TEAM_ID) ?
-            SimConstants.GOAL_PLANE_OFFSET :
-                _geometry.PitchLength - SimConstants.GOAL_PLANE_OFFSET;
+            Vector3 ab = b - a;
+            float t = Vector3.Dot(point - a, ab) / ab.sqrMagnitude;
+            t = Mathf.Clamp01(t);
+            return a + ab * t;
+        }
 
-            Vector3 ballPos3D = ball.Position;
-            Vector3 ballVel3D = ball.Velocity;
-
-            // Check for invalid velocity
-            if (float.IsNaN(ballVel3D.x) || float.IsNaN(ballVel3D.y) || float.IsNaN(ballVel3D.z))
+        /// <summary>
+        /// Predicts ball impact point with goal line for specified defending team
+        /// </summary>
+        /// <param name="ball">The ball to predict impact for</param>
+        /// <param name="defendingTeamSimId">The team ID (0=Home, 1=Away) defending the goal line</param>
+        /// <returns>The 3D point where the ball trajectory intersects the goal line plane</returns>
+        /// <remarks>Returns a fallback position if calculation fails or ball is null</remarks>
+        public Vector3 EstimateBallGoalLineImpact3D(SimBall ball, int defendingTeamSimId)
+        {
+            if (ball == null) return Vector3.zero;
+            try
             {
-                Debug.LogWarning("Ball has NaN velocity during impact calculation");
-                return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
+                // Use constants from SimConstants class
+                float goalPlaneX = (defendingTeamSimId == SimConstants.HOME_TEAM_ID) ?
+                SimConstants.GOAL_PLANE_OFFSET :
+                    _geometry.PitchLength - SimConstants.GOAL_PLANE_OFFSET;
+
+                Vector3 ballPos3D = ball.Position;
+                Vector3 ballVel3D = ball.Velocity;
+
+                // Check for invalid velocity
+                if (float.IsNaN(ballVel3D.x) || float.IsNaN(ballVel3D.y) || float.IsNaN(ballVel3D.z))
+                {
+                    Debug.LogWarning("Ball has NaN velocity during impact calculation");
+                    return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
+                }
+
+                // Check for near-zero velocity
+                if (Mathf.Abs(ballVel3D.x) < SimConstants.VELOCITY_NEAR_ZERO)
+                    return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
+
+                float timeToPlane = (goalPlaneX - ballPos3D.x) / ballVel3D.x;
+                if (timeToPlane < SimConstants.MIN_GOAL_PREDICTION_TIME || timeToPlane > SimConstants.MAX_GOAL_PREDICTION_TIME)
+                    return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
+
+                // Project position at impact time
+                Vector3 impactPoint = ProjectBallPosition(ballPos3D, ballVel3D, timeToPlane);
+
+                // Ensure impact point is on the goal plane
+                impactPoint.x = goalPlaneX;
+                impactPoint.y = Mathf.Max(impactPoint.y, SimConstants.BALL_RADIUS);
+
+                // Check for out of bounds
+                if (impactPoint.z < 0 || impactPoint.z > _geometry.PitchWidth)
+                {
+                    // Ball will miss the goal area entirely
+                    return new Vector3(goalPlaneX, impactPoint.y, Mathf.Clamp(impactPoint.z, 0, _geometry.PitchWidth));
+                }
+
+                return impactPoint;
             }
-
-            // Check for near-zero velocity
-            if (Mathf.Abs(ballVel3D.x) < SimConstants.VELOCITY_NEAR_ZERO)
-                return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
-
-            float timeToPlane = (goalPlaneX - ballPos3D.x) / ballVel3D.x;
-            if (timeToPlane < SimConstants.MIN_GOAL_PREDICTION_TIME || timeToPlane > SimConstants.MAX_GOAL_PREDICTION_TIME)
-                return new Vector3(goalPlaneX, ballPos3D.y, ballPos3D.z);
-
-            // Project position at impact time
-            Vector3 impactPoint = ProjectBallPosition(ballPos3D, ballVel3D, timeToPlane);
-
-            // Ensure impact point is on the goal plane
-            impactPoint.x = goalPlaneX;
-            impactPoint.y = Mathf.Max(impactPoint.y, SimConstants.BALL_RADIUS);
-
-            // Check for out of bounds
-            if (impactPoint.z < 0 || impactPoint.z > _geometry.PitchWidth)
+            catch (DivideByZeroException)
             {
-                // Ball will miss the goal area entirely
-                return new Vector3(goalPlaneX, impactPoint.y, Mathf.Clamp(impactPoint.z, 0, _geometry.PitchWidth));
+                Debug.LogError("Ball velocity.x was zero during impact calculation");
+                return FallbackImpactPoint(defendingTeamSimId, ball);
             }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Error predicting impact point: {ex.GetType().Name} - {ex.Message}");
+                return FallbackImpactPoint(defendingTeamSimId, ball);
+            }
+        }
 
-            return impactPoint;
-        }
-        catch (DivideByZeroException)
+        /// <summary>
+        /// Provides a fallback impact point when normal calculation fails
+        /// </summary>
+        /// <param name="defendingTeamSimId">The team ID defending the goal</param>
+        /// <param name="ball">The ball (may be null)</param>
+        /// <returns>A reasonable default position on the goal line</returns>
+        private Vector3 FallbackImpactPoint(int defendingTeamSimId, SimBall ball)
         {
-            Debug.LogError("Ball velocity.x was zero during impact calculation");
-            return FallbackImpactPoint(defendingTeamSimId, ball);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError($"Error predicting impact point: {ex.GetType().Name} - {ex.Message}");
-            return FallbackImpactPoint(defendingTeamSimId, ball);
-        }
-    }
-
-    /// <summary>
-    /// Provides a fallback impact point when normal calculation fails
-    /// </summary>
-    /// <param name="defendingTeamSimId">The team ID defending the goal</param>
-    /// <param name="ball">The ball (may be null)</param>
-    /// <returns>A reasonable default position on the goal line</returns>
-    private Vector3 FallbackImpactPoint(int defendingTeamSimId, SimBall ball)
-    {
-        float fallbackX = (defendingTeamSimId == SimConstants.HOME_TEAM_ID) ?
+            float fallbackX = (defendingTeamSimId == SimConstants.HOME_TEAM_ID) ?
             SimConstants.GOAL_LINE_X_HOME :
-            _geometry.PitchLength;
+                _geometry.PitchLength;
 
-        return new Vector3(
-            fallbackX,
-            Mathf.Max(SimConstants.BALL_RADIUS, ball?.Position.y ?? SimConstants.BALL_RADIUS),
-            _geometry.Center.z
-        );
-    }
-
-    /// <summary>
-    /// Estimates intercept point for a pass based on current ball trajectory and receiver movement
-    /// </summary>
-    /// <param name="ball">The ball in flight</param>
-    /// <param name="receiver">The player attempting to receive the pass</param>
-    /// <returns>The optimal 2D intercept point for the receiver to meet the ball</returns>
-    public Vector2 EstimatePassInterceptPoint(SimBall ball, SimPlayer receiver)
-    {
-        // Handle null or non-flight cases
-        if (ball == null || !ball.IsInFlight || receiver == null)
-        {
-            return receiver?.Position ?? Vector2.zero;
+            return new Vector3(
+                fallbackX,
+                Mathf.Max(SimConstants.BALL_RADIUS, ball?.Position.y ?? SimConstants.BALL_RADIUS),
+                _geometry.Center.z
+            );
         }
 
-        // Extract 2D positions and velocities from 3D
-        Vector2 ballPos2D = new Vector2(ball.Position.x, ball.Position.z);
-        Vector2 ballVel2D = new Vector2(ball.Velocity.x, ball.Velocity.z);
-        Vector2 receiverPos = receiver.Position;
-        float receiverSpeed = receiver.EffectiveSpeed;
-
-        // Validate velocities to avoid NaN errors
-        if (float.IsNaN(ballVel2D.x) || float.IsNaN(ballVel2D.y) || ballVel2D.sqrMagnitude < SimConstants.VELOCITY_NEAR_ZERO_SQ)
+        /// <summary>
+        /// Estimates intercept point for a pass based on current ball trajectory and receiver movement
+        /// </summary>
+        /// <param name="ball">The ball in flight</param>
+        /// <param name="receiver">The player attempting to receive the pass</param>
+        /// <returns>The optimal 2D intercept point for the receiver to meet the ball</returns>
+        public Vector2 EstimatePassInterceptPoint(SimBall ball, SimPlayer receiver)
         {
-            return ballPos2D; // Ball barely moving, just go to current position
-        }
-
-        // Calculate time range for prediction
-        float ballSpeed2D = ballVel2D.magnitude;
-        float maxPredictionTime = 2.0f; // Don't predict too far ahead
-
-        // Find optimal intercept time using simple approximation
-        float bestInterceptTime = 0.5f; // Default fallback
-        float minDistance = float.MaxValue;
-
-        // Sample several potential intercept times
-        for (float t = 0.1f; t <= maxPredictionTime; t += 0.1f)
-        {
-            // Project ball position at time t
-            Vector3 projectedBallPos3D = ProjectBallPosition(ball.Position, ball.Velocity, t);
-            Vector2 projectedBallPos = new Vector2(projectedBallPos3D.x, projectedBallPos3D.z);
-
-            // Calculate how far the receiver can travel in time t
-            float receiverTravelDistance = receiverSpeed * t;
-            float distanceToIntercept = Vector2.Distance(receiverPos, projectedBallPos);
-
-            // Calculate the difference between how far the receiver needs to go and can go
-            float distanceDifference = Mathf.Abs(distanceToIntercept - receiverTravelDistance);
-
-            // If this is a better match than previous best, update
-            if (distanceDifference < minDistance)
+            // Handle null or non-flight cases
+            if (ball == null || !ball.IsInFlight || receiver == null)
             {
-                minDistance = distanceDifference;
-                bestInterceptTime = t;
-            }
-        }
-
-        // Calculate final intercept position
-        Vector3 interceptPos3D = ProjectBallPosition(ball.Position, ball.Velocity, bestInterceptTime);
-        Vector2 interceptPos = new Vector2(interceptPos3D.x, interceptPos3D.z);
-
-        // Ensure the intercept point is within reasonable bounds
-        if (float.IsNaN(interceptPos.x) || float.IsNaN(interceptPos.y))
-        {
-            Debug.LogWarning("EstimatePassInterceptPoint calculated NaN position, using fallback");
-            return ballPos2D;
-        }
-
-        return interceptPos;
-    }
-
-    /// <summary>
-    /// Projects the ball's 3D position forward in time, considering physics using RK2 integration.
-    /// </summary>
-    /// <param name="startPos">The starting 3D position</param>
-    /// <param name="velocity">The initial 3D velocity</param>
-    /// <param name="time">The time duration to project forward</param>
-    /// <returns>The estimated 3D position after the specified time</returns>
-    /// <remarks>Uses RK2 integration and MatchSimulator.TIME_STEP_SECONDS as the simulation time step.</remarks>
-    public Vector3 ProjectBallPosition(Vector3 startPos, Vector3 velocity, float time)
-    {
-        if (time <= 0f || float.IsNaN(time) ||
-            float.IsNaN(startPos.x) || float.IsNaN(startPos.y) || float.IsNaN(startPos.z) ||
-            float.IsNaN(velocity.x) || float.IsNaN(velocity.y) || float.IsNaN(velocity.z))
-            return startPos;
-
-        try
-        {
-            float dragCoefficient = SimConstants.DRAG_COEFFICIENT * SimConstants.AIR_DENSITY;
-            Vector3 velocityStep = velocity;
-            Vector3 position = startPos;
-            float timeStep = MatchSimulator.TIME_STEP_SECONDS;
-
-            for (float t = 0; t < time; t += timeStep)
-            {
-                float dt = Mathf.Min(timeStep, time - t);
-                Vector3 drag = -velocityStep.normalized * velocityStep.sqrMagnitude * dragCoefficient;
-                Vector3 acceleration = _gravity + drag / SimConstants.BALL_MASS;
-                Vector3 midVel = velocityStep + 0.5f * acceleration * dt;
-                position += midVel * dt;
-                velocityStep += acceleration * dt;
+                return receiver?.Position ?? Vector2.zero;
             }
 
-            return position;
+            // Extract 2D positions and velocities from 3D
+            Vector2 ballPos2D = new Vector2(ball.Position.x, ball.Position.z);
+            Vector2 ballVel2D = new Vector2(ball.Velocity.x, ball.Velocity.z);
+            Vector2 receiverPos = receiver.Position;
+            float receiverSpeed = receiver.EffectiveSpeed;
+
+            // Validate velocities to avoid NaN errors
+            if (float.IsNaN(ballVel2D.x) || float.IsNaN(ballVel2D.y) || ballVel2D.sqrMagnitude < SimConstants.VELOCITY_NEAR_ZERO_SQ)
+            {
+                return ballPos2D; // Ball barely moving, just go to current position
+            }
+
+            // Calculate time range for prediction
+            float ballSpeed2D = ballVel2D.magnitude;
+            float maxPredictionTime = 2.0f; // Don't predict too far ahead
+
+            // Find optimal intercept time using simple approximation
+            float bestInterceptTime = 0.5f; // Default fallback
+            float minDistance = float.MaxValue;
+
+            // Sample several potential intercept times
+            for (float t = 0.1f; t <= maxPredictionTime; t += 0.1f)
+            {
+                // Project ball position at time t
+                Vector3 projectedBallPos3D = ProjectBallPosition(ball.Position, ball.Velocity, t);
+                Vector2 projectedBallPos = new Vector2(projectedBallPos3D.x, projectedBallPos3D.z);
+
+                // Calculate how far the receiver can travel in time t
+                float receiverTravelDistance = receiverSpeed * t;
+                float distanceToIntercept = Vector2.Distance(receiverPos, projectedBallPos);
+
+                // Calculate the difference between how far the receiver needs to go and can go
+                float distanceDifference = Mathf.Abs(distanceToIntercept - receiverTravelDistance);
+
+                // If this is a better match than previous best, update
+                if (distanceDifference < minDistance)
+                {
+                    minDistance = distanceDifference;
+                    bestInterceptTime = t;
+                }
+            }
+
+            // Calculate final intercept position
+            Vector3 interceptPos3D = ProjectBallPosition(ball.Position, ball.Velocity, bestInterceptTime);
+            Vector2 interceptPos = new Vector2(interceptPos3D.x, interceptPos3D.z);
+
+            // Ensure the intercept point is within reasonable bounds
+            if (float.IsNaN(interceptPos.x) || float.IsNaN(interceptPos.y))
+            {
+                Debug.LogWarning("EstimatePassInterceptPoint calculated NaN position, using fallback");
+                return ballPos2D;
+            }
+
+            return interceptPos;
         }
-        catch (Exception ex)
+
+        /// <summary>
+        /// Projects the ball's 3D position forward in time, considering physics using RK2 integration.
+        /// </summary>
+        /// <param name="startPos">The starting 3D position</param>
+        /// <param name="velocity">The initial 3D velocity</param>
+        /// <param name="time">The time duration to project forward</param>
+        /// <returns>The estimated 3D position after the specified time</returns>
+        /// <remarks>Uses RK2 integration and MatchSimulator.TIME_STEP_SECONDS as the simulation time step.</remarks>
+        public Vector3 ProjectBallPosition(Vector3 startPos, Vector3 velocity, float time)
         {
-            Debug.LogError($"Error in ProjectBallPosition: {ex.Message}");
-            return startPos;
+            if (time <= 0f || float.IsNaN(time) ||
+                float.IsNaN(startPos.x) || float.IsNaN(startPos.y) || float.IsNaN(startPos.z) ||
+                float.IsNaN(velocity.x) || float.IsNaN(velocity.y) || float.IsNaN(velocity.z))
+                return startPos;
+
+            try
+            {
+                float dragCoefficient = SimConstants.DRAG_COEFFICIENT * SimConstants.AIR_DENSITY;
+                Vector3 velocityStep = velocity;
+                Vector3 position = startPos;
+                float timeStep = MatchSimulator.TIME_STEP_SECONDS;
+
+                for (float t = 0; t < time; t += timeStep)
+                {
+                    float dt = Mathf.Min(timeStep, time - t);
+                    Vector3 drag = -velocityStep.normalized * velocityStep.sqrMagnitude * dragCoefficient;
+                    Vector3 acceleration = _gravity + drag / SimConstants.BALL_MASS;
+                    Vector3 midVel = velocityStep + 0.5f * acceleration * dt;
+                    position += midVel * dt;
+                    velocityStep += acceleration * dt;
+                }
+
+                return position;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Error in ProjectBallPosition: {ex.Message}");
+                return startPos;
+            }
         }
     }
-}
 }

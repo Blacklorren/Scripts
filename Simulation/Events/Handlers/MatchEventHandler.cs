@@ -50,7 +50,7 @@ namespace HandballManager.Simulation.Events.Handlers
         /// </summary>
         /// <param name="result">The ActionResult containing details of the event.</param>
         /// <param name="state">The current MatchState to be updated.</param>
-        public void HandleActionResult(ActionResult result, MatchState state)
+        public override void HandleActionResult(ActionResult result, MatchState state)
         {
             // Basic validation
             if (state == null) {
@@ -166,7 +166,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
          /// <summary>Handles explicit turnovers like inaccurate passes.</summary>
-         private void HandleTurnover(ActionResult result, MatchState state)
+         public override void HandleTurnover(ActionResult result, MatchState state)
          {
              SimPlayer player = result.PrimaryPlayer;
              string reason = result.Reason ?? "Unknown";
@@ -437,7 +437,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
         /// <summary>Handles the ball going out of bounds. Now accepts optional 3D intersection point.</summary>
-        public void HandleOutOfBounds(ActionResult result, MatchState state, Vector3? intersectionPoint3D = null)
+        public override void HandleOutOfBounds(ActionResult result, MatchState state, Vector3? intersectionPoint3D = null)
         {
              if (state?.Ball == null) { return; }
 
@@ -580,7 +580,7 @@ namespace HandballManager.Simulation.Events.Handlers
         /// <param name="state">Current match state.</param>
         /// <param name="newPossessionTeamId">The new team in possession (-1 for contested).</param>
         /// <param name="ballIsLoose">Indicates if the ball is currently loose.</param>
-        internal void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
+        public override void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
         {
             if (state == null) return;
 
@@ -632,7 +632,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
         /// <summary>Logs an event to the match state's event list.</summary>
-        private void LogEvent(MatchState state, string description, int? teamId = null, int? playerId = null)
+        public override void LogEvent(MatchState state, string description, int? teamId = null, int? playerId = null)
         {
             if (state?.MatchEvents == null) return;
             try
@@ -648,7 +648,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
         /// <summary>Helper to transition phase within the event handler context.</summary>
-        private void TransitionToPhase(MatchState state, GamePhase newPhase) {
+        public override void TransitionToPhase(MatchState state, GamePhase newPhase) {
              // Reuse MatchSimulator's transition logic if accessible, or replicate:
              if (state == null || state.CurrentPhase == newPhase) return;
              state.CurrentPhase = newPhase;

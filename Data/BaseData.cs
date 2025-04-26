@@ -29,12 +29,21 @@ namespace HandballManager.Data
         public int Composure = 50;
         public int Concentration = 50;
         public int Anticipation = 50;
+        /// <summary>
+        /// Vision (0-100). Capacité à percevoir les ouvertures et à anticiper les passes difficiles.
+        /// </summary>
+        public int Vision = 50;
+        /// <summary>
+        /// Creativity (0-100). Capacité à inventer des actions inattendues, à surprendre l'adversaire.
+        /// </summary>
+        public int Creativity = 50;
         public int DecisionMaking = 50;
         public int Teamwork = 50;
         public int WorkRate = 50;
         public int Leadership = 50;
         public int Positioning = 50;
         public int Determination = 50;
+        public int TacticalAwareness = 50;
 
         // Goalkeeping (optional)
         public int Reflexes = 20;

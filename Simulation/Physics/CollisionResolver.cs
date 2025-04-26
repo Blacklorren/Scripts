@@ -170,6 +170,33 @@ namespace HandballManager.Simulation.Physics
                 }
             }
 
+            // --- Player-Ball Deflections ---
+            if (state.Ball != null)
+            {
+                SimBall ball = state.Ball;
+                foreach (var player in players)
+                {
+                    var playerPos3D = new Vector3(player.Position.x, ball.Position.y, player.Position.y);
+                    var diff = ball.Position - playerPos3D;
+                    float radiusSum = PLAYER_COLLISION_RADIUS + SimConstants.BALL_RADIUS;
+                    if (diff.sqrMagnitude <= radiusSum * radiusSum)
+                    {
+                        var normal = diff.normalized;
+                        // Reflect velocity and apply restitution
+                        var reflected = Vector3.Reflect(ball.Velocity, normal) * SimConstants.COEFFICIENT_OF_RESTITUTION;
+                        // Technique influences deflection strength
+                        float techFactor = (player.BaseData?.Technique ?? 50f) / 100f;
+                        ball.Velocity = Vector3.Lerp(reflected, reflected.normalized * ball.Velocity.magnitude, techFactor);
+                        // Adjust position to avoid penetration
+                        ball.Position = playerPos3D + normal * SimConstants.BALL_RADIUS;
+                        Debug.Log("Deflection");
+                        // Player stumbles upon deflection
+                        player.StartStumble(SimConstants.STUMBLE_DURATION);
+                        break;
+                    }
+                }
+            }
+
             // Boundary clamping for players
             foreach (var player in players)
             {
@@ -207,4 +234,3 @@ namespace HandballManager.Simulation.Physics
       
      }
 }
-

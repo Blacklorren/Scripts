@@ -40,22 +40,24 @@ namespace HandballManager.Simulation.AI
 
         /// <summary>
         /// Initializes a new instance of the AIServiceBundle with all required AI components.
+        /// If any evaluator is not provided, uses the default attribute-driven implementation.
         /// </summary>
         public AIServiceBundle(
             IPlayerAIController playerController,
-            IPersonalityEvaluator personalityEvaluator,
-            ITacticalEvaluator tacticalEvaluator,
-            IGameStateEvaluator gameStateEvaluator,
-            IPassingDecisionMaker passingDecisionMaker,
-            IShootingDecisionMaker shootingDecisionMaker,
-            IDribblingDecisionMaker dribblingDecisionMaker,
-            IDefensiveDecisionMaker defensiveDecisionMaker,
-            IGoalkeeperPositioner goalkeeperPositioner)
+            IPersonalityEvaluator personalityEvaluator = null,
+            ITacticalEvaluator tacticalEvaluator = null,
+            IGameStateEvaluator gameStateEvaluator = null,
+            IPassingDecisionMaker passingDecisionMaker = null,
+            IShootingDecisionMaker shootingDecisionMaker = null,
+            IDribblingDecisionMaker dribblingDecisionMaker = null,
+            IDefensiveDecisionMaker defensiveDecisionMaker = null,
+            IGoalkeeperPositioner goalkeeperPositioner = null)
         {
             PlayerController = playerController ?? throw new ArgumentNullException(nameof(playerController));
-            PersonalityEvaluator = personalityEvaluator ?? throw new ArgumentNullException(nameof(personalityEvaluator));
-            TacticalEvaluator = tacticalEvaluator ?? throw new ArgumentNullException(nameof(tacticalEvaluator));
-            GameStateEvaluator = gameStateEvaluator ?? throw new ArgumentNullException(nameof(gameStateEvaluator));
+            // Use default attribute-driven evaluators if not provided
+            PersonalityEvaluator = personalityEvaluator ?? new PersonalityEvaluator();
+            TacticalEvaluator = tacticalEvaluator ?? new TacticalEvaluator();
+            GameStateEvaluator = gameStateEvaluator ?? new GameStateEvaluator();
             PassingDecisionMaker = passingDecisionMaker ?? throw new ArgumentNullException(nameof(passingDecisionMaker));
             ShootingDecisionMaker = shootingDecisionMaker ?? throw new ArgumentNullException(nameof(shootingDecisionMaker));
             DribblingDecisionMaker = dribblingDecisionMaker ?? throw new ArgumentNullException(nameof(dribblingDecisionMaker));

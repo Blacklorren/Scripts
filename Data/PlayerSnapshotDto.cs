@@ -18,7 +18,7 @@ namespace HandballManager.Data
         public Vector2 LookDirection;
         public bool HasBall;
         public float Stamina;
-        public float CurrentFatigue;
+
         public bool IsOnCourt;
         public float SuspensionTimer;
         public bool IsJumping;

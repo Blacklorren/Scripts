@@ -12,6 +12,8 @@ namespace HandballManager.Data
         public string Name { get; set; }
         public string Type { get; set; } // Ex: "Offensive", "Défensive", etc.
         public string Description { get; set; }
+        public string OffensiveFormationName { get; set; }
+        public string DefensiveFormationName { get; set; }
         // Ajouter ici d'autres propriétés purement données nécessaires à la sauvegarde/chargement
     }
 }

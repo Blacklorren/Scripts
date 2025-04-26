@@ -4,6 +4,7 @@ using HandballManager.Simulation.AI.Decision;
 using HandballManager.Simulation.Engines;
 using HandballManager.Data;
 using HandballManager.Gameplay;
+using HandballManager.Simulation.AI.Evaluation;
 using HandballManager.Simulation.Factories;
 using HandballManager.Simulation.AI;
 using HandballManager.Simulation.Services;
@@ -35,8 +36,23 @@ namespace HandballManager.Simulation.Installers
             Container.Bind<IMatchSimulationCoordinator>().To<MatchSimulationCoordinator>().AsSingle();
 
             // AI services
-            Container.Bind<IOffensiveDecisionMaker>().To<DefaultOffensiveDecisionMaker>().AsSingle();
-            Container.Bind<IDefensiveDecisionMaker>().To<DefaultDefensiveDecisionMaker>().AsSingle();
+            // Ensure evaluators are bound
+            Container.Bind<ITacticalEvaluator>().To<TacticalEvaluator>().AsSingle();
+            Container.Bind<IPersonalityEvaluator>().To<PersonalityEvaluator>().AsSingle();
+            Container.Bind<IGameStateEvaluator>().To<GameStateEvaluator>().AsSingle();
+            // Explicitly inject evaluators into DefaultOffensiveDecisionMaker
+            Container.Bind<IOffensiveDecisionMaker>().FromMethod(ctx =>
+                new DefaultOffensiveDecisionMaker(
+                    ctx.Container.Resolve<ITacticalEvaluator>(),
+                    ctx.Container.Resolve<IPersonalityEvaluator>(),
+                    ctx.Container.Resolve<IGameStateEvaluator>()
+                )).AsSingle();
+            Container.Bind<IDefensiveDecisionMaker>().FromMethod(ctx =>
+                new DefaultDefensiveDecisionMaker(
+                    ctx.Container.Resolve<ITacticalEvaluator>(),
+                    ctx.Container.Resolve<IPersonalityEvaluator>(),
+                    ctx.Container.Resolve<IGameStateEvaluator>()
+                )).AsSingle();
             Container.Bind<IPlayerAIService>().To<CompositeAIService>().AsSingle();
 
             // Tactic provider (uses runtime values)

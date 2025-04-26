@@ -67,6 +67,33 @@ namespace HandballManager.Simulation.Engines
         /// <summary>Log of significant events that occurred during the simulation.</summary>
         public List<MatchEvent> MatchEvents { get; } = new List<MatchEvent>();
 
+        /// <summary>
+        /// Returns the score difference for the specified team (0=Home, 1=Away).
+        /// Positive if the team is leading, negative if trailing.
+        /// </summary>
+        public int GetScoreDifference(int teamSimId)
+        {
+            if (teamSimId == 0)
+                return HomeScore - AwayScore;
+            else if (teamSimId == 1)
+                return AwayScore - HomeScore;
+            else
+                throw new ArgumentException("Invalid teamSimId (must be 0=Home or 1=Away)");
+        }
+
+        /// <summary>
+        /// Returns the time left in the match in seconds.
+        /// </summary>
+        public float GetTimeLeftSeconds()
+        {
+            return MatchDurationSeconds - MatchTimeSeconds;
+        }
+
+        /// <summary>
+        /// Dictionnaire des statistiques individuelles des joueurs pour ce match (clé = PlayerID).
+        /// </summary>
+        public Dictionary<int, PlayerMatchStats> PlayerStats { get; } = new Dictionary<int, PlayerMatchStats>();
+
         // --- Game Progression & Temporary State ---
         /// <summary>Flag indicating if the simulation has passed the half-time mark.</summary>
         public bool HalfTimeReached { get; set; } = false;
@@ -84,6 +111,17 @@ namespace HandballManager.Simulation.Engines
         public int HomeTimeoutsRemaining { get; set; } = 3; // Default based on common rules
         /// <summary>Number of timeouts remaining for the away team.</summary>
         public int AwayTimeoutsRemaining { get; set; } = 3; // Default based on common rules
+
+        /// <summary>Nombre de temps morts utilisés par mi-temps pour chaque équipe [0]=1ère mi-temps, [1]=2ème mi-temps.</summary>
+        public int[] HomeTimeoutsUsedByHalf { get; set; } = new int[2];
+        public int[] AwayTimeoutsUsedByHalf { get; set; } = new int[2];
+        /// <summary>True si un timeout a déjà été posé dans les 5 dernières minutes (par équipe).</summary>
+        public bool HomeTimeoutUsedLast5Min { get; set; } = false;
+        public bool AwayTimeoutUsedLast5Min { get; set; } = false;
+
+        /// <summary>True si le 1er timeout a été perdu faute d'utilisation en 1ère mi-temps.</summary>
+        public bool HomeFirstTimeoutLost { get; set; } = false;
+        public bool AwayFirstTimeoutLost { get; set; } = false;
         // Note: Logic for calling timeouts and enforcing limits needs implementation elsewhere.
 
         // --- Randomness ---
@@ -107,6 +145,7 @@ namespace HandballManager.Simulation.Engines
         /// <exception cref="ArgumentNullException">Thrown if required parameters (teams, tactics) are null.</exception>
         public MatchState(TeamData homeTeam, TeamData awayTeam, Tactic homeTactic, Tactic awayTactic, int randomSeed)
         {
+            PlayerStats = new Dictionary<int, PlayerMatchStats>();
             // --- Constructor Validation ---
             HomeTeamData = homeTeam ?? throw new ArgumentNullException(nameof(homeTeam));
             AwayTeamData = awayTeam ?? throw new ArgumentNullException(nameof(awayTeam));
@@ -119,6 +158,93 @@ namespace HandballManager.Simulation.Engines
             Ball = new SimBall(); // Ensure ball is created
             CurrentHomeStats = new TeamMatchStats(); // Ensure stats objects are created
             CurrentAwayStats = new TeamMatchStats();
+
+            HomeTimeoutsUsedByHalf = new int[2];
+            AwayTimeoutsUsedByHalf = new int[2];
+            HomeTimeoutUsedLast5Min = false;
+            AwayTimeoutUsedLast5Min = false;
+            HomeFirstTimeoutLost = false;
+            AwayFirstTimeoutLost = false;
+        }
+
+        /// <summary>
+        /// Appelle à utiliser un timeout pour une équipe (0=home, 1=away), enregistre l'utilisation par mi-temps et en toute fin de match.
+        /// </summary>
+        public void RegisterTimeoutUsage(int teamSimId, float matchTimeSeconds, float matchDurationSeconds)
+        {
+            bool isFirstHalf = matchTimeSeconds < matchDurationSeconds / 2f;
+            bool isLast5Min = (matchDurationSeconds - matchTimeSeconds) <= 300f;
+            int halfIdx = isFirstHalf ? 0 : 1;
+            if (teamSimId == 0)
+            {
+                HomeTimeoutsUsedByHalf[halfIdx]++;
+                if (isLast5Min) HomeTimeoutUsedLast5Min = true;
+            }
+            else if (teamSimId == 1)
+            {
+                AwayTimeoutsUsedByHalf[halfIdx]++;
+                if (isLast5Min) AwayTimeoutUsedLast5Min = true;
+            }
+        }
+
+        /// <summary>
+        /// Invalide le 1er timeout si non utilisé en 1ère mi-temps (à appeler à la mi-temps).
+        /// </summary>
+        public void InvalidateFirstTimeoutIfNotUsed()
+        {
+            if (HomeTimeoutsUsedByHalf[0] == 0)
+            {
+                HomeFirstTimeoutLost = true;
+                if (HomeTimeoutsRemaining > 0) HomeTimeoutsRemaining--;
+            }
+            if (AwayTimeoutsUsedByHalf[0] == 0)
+            {
+                AwayFirstTimeoutLost = true;
+                if (AwayTimeoutsRemaining > 0) AwayTimeoutsRemaining--;
+            }
+        }
+
+        /// <summary>
+        /// Retourne true si un timeout peut être posé par l'équipe (en tenant compte des règles strictes).
+        /// </summary>
+        public bool CanTriggerTimeout(int teamSimId, float matchTimeSeconds, float matchDurationSeconds)
+        {
+            bool isFirstHalf = matchTimeSeconds < matchDurationSeconds / 2f;
+            bool isLast5Min = (matchDurationSeconds - matchTimeSeconds) <= 300f;
+            if (teamSimId == 0)
+            {
+                if (HomeTimeoutsRemaining <= 0) return false;
+                if (isLast5Min && HomeTimeoutUsedLast5Min) return false; // Un seul timeout possible dans les 5 dernières minutes
+                if (!isFirstHalf && HomeFirstTimeoutLost && HomeTimeoutsRemaining == 2) return false; // 1er timeout perdu
+            }
+            else if (teamSimId == 1)
+            {
+                if (AwayTimeoutsRemaining <= 0) return false;
+                if (isLast5Min && AwayTimeoutUsedLast5Min) return false;
+                if (!isFirstHalf && AwayFirstTimeoutLost && AwayTimeoutsRemaining == 2) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Retourne le différentiel de buts encaissés sur les X dernières minutes (positif = l'équipe subit).
+        /// </summary>
+        public int GetGoalDifferentialLastMinutes(int teamSimId, float matchTimeSeconds, float minutes)
+        {
+            float fromTime = matchTimeSeconds - minutes * 60f;
+            int goalsFor = 0, goalsAgainst = 0;
+            foreach (var evt in MatchEvents)
+            {
+                if (evt.TimeSeconds < fromTime) continue;
+                if (evt.Description.Contains("But") || evt.Description.Contains("Goal"))
+                {
+                    if (evt.TeamId == (teamSimId == 0 ? HomeTeamData.TeamID : AwayTeamData.TeamID))
+                        goalsFor++;
+                    else if (evt.TeamId == (teamSimId == 0 ? AwayTeamData.TeamID : HomeTeamData.TeamID))
+                        goalsAgainst++;
+                }
+            }
+            return goalsAgainst - goalsFor;
         }
 
         // --- Utility Accessors ---

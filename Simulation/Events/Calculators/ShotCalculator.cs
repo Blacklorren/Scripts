@@ -51,21 +51,48 @@ namespace HandballManager.Simulation.Events.Calculators
                 ? new Vector2(ActionResolverConstants.PITCH_LENGTH, ActionResolverConstants.PITCH_CENTER_Y)
                 : new Vector2(0f, ActionResolverConstants.PITCH_CENTER_Y);
 
-            float accuracyFactor = Mathf.Clamp(shooter.BaseData.ShootingAccuracy, 1f, 100f) / ActionResolverConstants.SHOT_ACCURACY_BASE;
-            float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(shooter, state); // Use Util
-            float composureEffect = Mathf.Lerp(1.0f, 1.0f - ActionResolverConstants.SHOT_COMPOSURE_FACTOR, shooter.BaseData.Composure / 100f);
+            // --- Attributs utilisés dans le calcul du tir ---
+            float accuracyFactor = Mathf.Clamp(shooter.BaseData.ShootingAccuracy, 1f, 100f) / ActionResolverConstants.SHOT_ACCURACY_BASE; // Précision de tir
+            float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(shooter, state); // Pression défensive
+            float composureEffect = Mathf.Lerp(1.0f, 1.0f - ActionResolverConstants.SHOT_COMPOSURE_FACTOR, shooter.BaseData.Composure / 100f); // Calme sous pression
+
+            // Stamina (fatigue = 1 - Stamina) : impacte négativement la précision et la puissance
+            float staminaEffect = Mathf.Lerp(0.85f, 1.0f, shooter.BaseData.Stamina / 100f); // Stamina faible = -15% perf
+            // Détermination et WorkRate réduisent l'effet de la fatigue
+            float determinationMod = Mathf.Lerp(0.95f, 1.0f, shooter.BaseData.Determination / 100f);
+            float workRateMod = Mathf.Lerp(0.95f, 1.0f, shooter.BaseData.WorkRate / 100f);
+            staminaEffect *= determinationMod * workRateMod;
+
+            // Force : réduit l'impact de la pression physique
+            float strengthEffect = Mathf.Lerp(1.1f, 1.0f, shooter.BaseData.Strength / 100f); // Plus fort = moins d'impact négatif
+            // Agilité : réduit la perte de précision sur tir en mouvement
+            float agilityEffect = Mathf.Lerp(0.95f, 1.0f, shooter.BaseData.Agility / 100f);
+            // Positioning : améliore l'angle de tir (réduit la déviation)
+            float positioningMod = Mathf.Lerp(1.0f, 0.95f, shooter.BaseData.Positioning / 100f);
 
             float maxAngleDeviation = ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * (1.0f - accuracyFactor);
-            maxAngleDeviation *= (1.0f + pressure * ActionResolverConstants.SHOT_PRESSURE_INACCURACY_MOD * composureEffect);
+            maxAngleDeviation *= (1.0f + pressure * ActionResolverConstants.SHOT_PRESSURE_INACCURACY_MOD * composureEffect * strengthEffect);
+            maxAngleDeviation *= agilityEffect * positioningMod; // Ajout effet agilité et placement
             maxAngleDeviation = Mathf.Clamp(maxAngleDeviation, 0f, ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * ActionResolverConstants.SHOT_MAX_DEVIATION_CLAMP_FACTOR);
 
             float horizontalAngleOffset = (float)state.RandomGenerator.NextDouble() * 2 * maxAngleDeviation - maxAngleDeviation;
 
-            Vector3 shooterPos3D = ActionCalculatorUtils.GetPosition3D(shooter); // Use Util
+            Vector3 shooterPos3D = ActionCalculatorUtils.GetPosition3D(shooter); // Utilise la position 3D réelle
             Vector3 targetGoalCenter3D = new Vector3(targetGoalCenter2D.x, 1.2f, targetGoalCenter2D.y);
 
-            float speed = ActionResolverConstants.SHOT_BASE_SPEED * Mathf.Lerp(0.8f, 1.2f, shooter.BaseData.ShootingPower / 100f);
+            float speed = ActionResolverConstants.SHOT_BASE_SPEED * Mathf.Lerp(0.8f, 1.2f, shooter.BaseData.ShootingPower / 100f) * staminaEffect;
             Vector3 idealDirection3D = (targetGoalCenter3D - shooterPos3D).normalized;
+            // --- Fin intégration attributs physiques/mentaux ---
+
+            // Documentation attributs :
+            // - ShootingAccuracy : modifie la précision de base
+            // - Composure : réduit l'effet négatif de la pression
+            // - Stamina : réduit la puissance et la précision si faible
+            // - Determination & WorkRate : réduisent l'effet de la fatigue
+            // - Strength : réduit l'impact physique de la pression
+            // - Agility : réduit la perte de précision sur tir en mouvement
+            // - Positioning : réduit la déviation de l'angle de tir
+
             if(idealDirection3D.sqrMagnitude < SimConstants.FLOAT_EPSILON * SimConstants.FLOAT_EPSILON) idealDirection3D = Vector3.forward;
 
             Quaternion horizontalRotation = Quaternion.AngleAxis(horizontalAngleOffset, Vector3.up);
@@ -92,9 +119,11 @@ namespace HandballManager.Simulation.Events.Calculators
                 ShotSpeed = speed,
                 ShotHeight = shooter.BaseData.Height,
                 ShotAngle = horizontalAngleOffset,
-                ShotDeception = shooter.BaseData.Blocking, // Tied to blocking attribute as per user request
+                // ShotDeception : pourrait aussi être influencé par Technique ou Agility
+                ShotDeception = Mathf.Lerp(shooter.BaseData.Blocking, shooter.BaseData.Technique, shooter.BaseData.Agility / 100f),
                 ReleaseTime = Time.time // Or use a simulation time if available
-            };
+            }; // Technique et Agility influencent la tromperie du tir
+
             var blockResult = _blockCalculator.TryBlockShot(shooter, state, shotContext);
             if (blockResult.Blocked || blockResult.Partial) {
                 // Enhanced block outcome logic

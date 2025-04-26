@@ -128,6 +128,7 @@ namespace HandballManager.Core
         Loyal,          // Passes more, team-oriented
         Volatile,       // More risky actions, less predictable
         Aggressive,     // More tackles, higher foul risk
+        Leader,         // Inspires and organizes teammates, higher influence
         Lazy            // Less defensive work rate
     }
 

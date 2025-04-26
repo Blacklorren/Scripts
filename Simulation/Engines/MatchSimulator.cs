@@ -1,6 +1,7 @@
 
 using UnityEngine;
 using HandballManager.Simulation.AI; // Updated from Engines to AI for PlayerAIController
+using HandballManager.Simulation.AI.Positioning; // For ITacticPositioner
 using HandballManager.Simulation.Engines; // For PassivePlayManager
 using HandballManager.Simulation.Physics; // For MovementSimulator and other physics components
 using HandballManager.Core; // For Enums (GamePhase)
@@ -95,6 +96,11 @@ namespace HandballManager.Simulation.Engines
             _ballPhysicsCalculator = ballPhysicsCalculator ?? throw new ArgumentNullException(nameof(ballPhysicsCalculator));
             _movementSimulator = movementSimulator ?? throw new ArgumentNullException(nameof(movementSimulator));
             _aiController = aiController ?? throw new ArgumentNullException(nameof(aiController));
+            // --- Injection du simulateur dans l'IA si possible ---
+            if (_aiController is HandballManager.Simulation.AI.PlayerAIController concreteAI)
+            {
+                concreteAI.SetMatchSimulator(this);
+            }
             _actionResolver = actionResolver ?? throw new ArgumentNullException(nameof(actionResolver));
             _eventDetector = eventDetector ?? throw new ArgumentNullException(nameof(eventDetector));
             _eventHandler = eventHandler ?? throw new ArgumentNullException(nameof(eventHandler));
@@ -173,8 +179,13 @@ namespace HandballManager.Simulation.Engines
         /// </summary>
         /// <param name="matchDate">The date the match occurred (passed to finalizer).</param>
         /// <returns>The MatchResult containing score and statistics.</returns>
+        /// <summary>
+        /// Runs the main simulation loop from the current state until the match finishes.
+        /// Handles timeout phase by pausing match time and player actions.
+        /// </summary>
         public MatchResult SimulateMatch(DateTime matchDate)
         {
+            float perSecondAccumulator = 0f;
             if (!_isInitialized || _state == null)
             {
                 _eventHandler?.LogEvent(_state, "Match Simulation cannot start: Not Initialized.");
@@ -187,14 +198,50 @@ namespace HandballManager.Simulation.Engines
                 
                 while (_state.CurrentPhase != GamePhase.Finished && !_cancellationSource.Token.IsCancellationRequested)
                 {
+                    if (_state.CurrentPhase == GamePhase.Timeout)
+                    {
+                        // Only decrement TimeoutTimer, do not advance match time or update player actions
+                        _state.TimeoutTimer -= TIME_STEP_SECONDS;
+                        if (_state.TimeoutTimer <= 0f)
+                        {
+                            _eventHandler.LogEvent(_state, $"Timeout ended for team {_state.PossessionTeamId}");
+                            _state.TimeoutTimer = 0f;
+                            // Restore previous phase
+                            _phaseManager.TransitionToPhase(_state, _state.PhaseBeforeTimeout);
+                        }
+                        continue; // Skip normal gameplay updates
+                    }
+
                     // --- Passive Play Warning System ---
                     _passivePlayManager.Update(TIME_STEP_SECONDS);
 
-                    // Exemple d'intégration pour chaque passe (à placer dans la logique de passe réelle) :
-                    // _passivePlayManager.OnPassMade(_state.PossessionTeamId);
+                    // --- Check for half-time transition and invalidate unused timeout ---
+                    if (!_state.IsSecondHalf && _state.HalfTimeReached)
+                    {
+                        _state.IsSecondHalf = true;
+                        _state.InvalidateFirstTimeoutIfNotUsed();
+                        _eventHandler.LogEvent(_state, "Mi-temps atteinte : 1er timeout perdu si non utilisé");
+                    }
 
-                    // Exemple d'intégration pour une sanction défensive (à placer dans la logique de gestion des sanctions) :
-                    // _passivePlayManager.ResetAttackTimer();
+                    // (Normal simulation logic would go here)
+
+                    // --- Suivi du temps de jeu individuel ---
+                    // On incrémente les minutes jouées pour chaque joueur sur le terrain toutes les secondes
+                    // (On suppose TIME_STEP_SECONDS = 0.1f, donc on accumule et on update chaque seconde)
+                    perSecondAccumulator += TIME_STEP_SECONDS;
+                    if (perSecondAccumulator >= 1.0f)
+                    {
+                        foreach (var p in _state.HomePlayersOnCourt.Concat(_state.AwayPlayersOnCourt))
+                        {
+                            if (p == null) continue;
+                            int pid = p.GetPlayerId();
+                            if (!_state.PlayerStats.ContainsKey(pid))
+                                _state.PlayerStats[pid] = new PlayerMatchStats();
+                            _state.PlayerStats[pid].MinutesPlayed++;
+                            _state.PlayerStats[pid].Participated = true;
+                        }
+                        perSecondAccumulator = 0f;
+                    }
 
                     // Check for external cancellation if token was implemented
                     // cancellationToken.ThrowIfCancellationRequested();
@@ -228,6 +275,69 @@ namespace HandballManager.Simulation.Engines
         public void CancelSimulation()
         {
             _cancellationSource?.Cancel();
+        }
+        /// <summary>
+        /// Attempts to perform a tactical substitution during the match simulation.
+        /// </summary>
+        /// <param name="playerOut">The player to be substituted out (must be on court).</param>
+        /// <param name="playerIn">The player to be substituted in (must be on bench).</param>
+        /// <returns>True if the substitution was successful, false otherwise.</returns>
+        public bool TrySubstitute(SimPlayer playerOut, SimPlayer playerIn)
+        {
+            // Use the static SubstitutionManager and inject dependencies from this simulator
+            // _state: current MatchState
+            // _eventHandler: event logger
+            // _aiController: AI controller (implements IPlayerAIController)
+            // _phaseManager or another dependency could implement ITacticPositioner if available
+            ITacticPositioner tacticPositioner = _aiController as ITacticPositioner; // Try cast if applicable
+            return SubstitutionManager.TrySubstitute(
+                _state,
+                playerOut,
+                playerIn,
+                _eventHandler,
+                tacticPositioner,
+                _aiController
+            );
+        }
+        /// <summary>
+        /// Triggers a timeout for the specified team if allowed.
+        /// </summary>
+        /// <param name="teamSimId">0=Home, 1=Away</param>
+        /// <returns>True if timeout was successfully triggered, false otherwise.</returns>
+        public bool TriggerTimeout(int teamSimId)
+        {
+            // Only allow timeout if not already in timeout and team is in possession
+            if (_state.CurrentPhase == GamePhase.Timeout)
+            {
+                _eventHandler.LogEvent(_state, "Timeout request ignored: already in timeout phase.");
+                return false;
+            }
+            if (_state.PossessionTeamId != teamSimId)
+            {
+                _eventHandler.LogEvent(_state, $"Timeout request denied: Team {teamSimId} not in possession.");
+                return false;
+            }
+            // Check remaining timeouts
+            if (teamSimId == 0 && _state.HomeTimeoutsRemaining <= 0)
+            {
+                _eventHandler.LogEvent(_state, "Home team has no timeouts remaining.");
+                return false;
+            }
+            if (teamSimId == 1 && _state.AwayTimeoutsRemaining <= 0)
+            {
+                _eventHandler.LogEvent(_state, "Away team has no timeouts remaining.");
+                return false;
+            }
+            // Store previous phase
+            _state.PhaseBeforeTimeout = _state.CurrentPhase;
+            // Decrement timeout count
+            if (teamSimId == 0) _state.HomeTimeoutsRemaining--;
+            else if (teamSimId == 1) _state.AwayTimeoutsRemaining--;
+            // Set timeout phase and timer
+            _phaseManager.TransitionToPhase(_state, GamePhase.Timeout);
+            _state.TimeoutTimer = 60f; // Standard timeout duration (can be made configurable)
+            _eventHandler.LogEvent(_state, $"Timeout started for team {teamSimId}");
+            return true;
         }
     }
 }

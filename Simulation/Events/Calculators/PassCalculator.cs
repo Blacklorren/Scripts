@@ -245,37 +245,60 @@ namespace HandballManager.Simulation.Events.Calculators
                                          ActionResolverConstants.PASS_ACCURACY_SKILL_MAX_MOD,
                                          clampedSkill / 100f);
 
-            // --- Factor 2: Distance ---
-            // Calculate distance if not provided
+            // --- Vision : réduit la pénalité de distance sur passes difficiles ---
+            float visionMod = Mathf.Lerp(1.0f, 0.85f, passer.BaseData.Vision / 100f); // Vision élevée = -15% pénalité distance
             float dist = distance ?? Vector2.Distance(passer.Position, target.Position);
-            // Apply penalty based on distance. Clamp the penalty effect to avoid excessive reduction.
-            // Example: Max penalty of 0.5 (50% reduction) from distance alone.
-            float distancePenalty = Mathf.Clamp(dist * ActionResolverConstants.PASS_DISTANCE_FACTOR, 0f, ActionResolverConstants.PASS_DISTANCE_MAX_PENALTY_ABS); // Use a constant for max penalty
+            float distancePenalty = Mathf.Clamp(dist * ActionResolverConstants.PASS_DISTANCE_FACTOR * visionMod, 0f, ActionResolverConstants.PASS_DISTANCE_MAX_PENALTY_ABS);
             accuracyChance -= distancePenalty;
 
+            // --- Agility : réduit l'impact de la pression sur la précision de la passe ---
+            float agilityMod = Mathf.Lerp(1.0f, 0.9f, passer.BaseData.Agility / 100f); // Agilité élevée = -10% pénalité pression
+
+            // --- Teamwork : améliore la réussite si le receveur a aussi un bon Teamwork ---
+            float teamworkMod = Mathf.Lerp(1.0f, 1.05f, Mathf.Min(passer.BaseData.Teamwork, target.BaseData.Teamwork) / 100f); // Bonus max +5%
+
+            // --- Positioning : réduit la pénalité si le receveur est bien placé ---
+            float positioningMod = Mathf.Lerp(1.0f, 0.95f, target.BaseData.Positioning / 100f); // Bonus max -5% pénalité pression
+
+            // --- Leadership : réduit la pénalité de pression pour les passes clés ---
+            float leadershipMod = Mathf.Lerp(1.0f, 0.97f, passer.BaseData.Leadership / 100f); // Bonus max -3%
+
+            // --- WorkRate & Stamina : réduisent la pénalité de fatigue ---
+            float workRateMod = Mathf.Lerp(1.0f, 0.95f, passer.BaseData.WorkRate / 100f);
+            float staminaMod = Mathf.Lerp(1.0f, 0.9f, passer.BaseData.Stamina / 100f);
 
             // --- Factor 3: Pressure ---
             // Calculate pressure on the passer using a utility function
             float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(passer, state);
             // Calculate base pressure penalty
-            float pressurePenalty = pressure * ActionResolverConstants.PASS_PRESSURE_FACTOR;
+            float pressurePenalty = pressure * ActionResolverConstants.PASS_PRESSURE_FACTOR * agilityMod * positioningMod * leadershipMod;
             // Reduce penalty based on passer's composure (higher composure = less affected by pressure)
             float composureModifier = Mathf.Lerp(0f, ActionResolverConstants.PASS_COMPOSURE_MAX_EFFECT, passer.BaseData.Composure / 100f); // Use a constant for max effect
             pressurePenalty *= (1.0f - composureModifier);
             // Apply pressure penalty
             accuracyChance -= pressurePenalty;
 
-            // --- Factor 4: Fatigue ---
+            // --- Factor 4: Stamina (fatigue = 1 - Stamina) ---
             if (ActionResolverConstants.PASS_FATIGUE_FACTOR > 0)
             {
-                float fatiguePenalty = passer.CurrentFatigue * ActionResolverConstants.PASS_FATIGUE_FACTOR;
+                float fatiguePenalty = (1f - passer.Stamina) * ActionResolverConstants.PASS_FATIGUE_FACTOR * workRateMod * staminaMod;
                 accuracyChance -= fatiguePenalty;
                 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Debug.Log($"[Fatigue] Player {passer.BaseData?.FullName} fatigue: {passer.CurrentFatigue:F2}, penalty: {fatiguePenalty:F2}");
+                Debug.Log($"[Stamina] Player {passer.BaseData?.FullName} stamina: {passer.Stamina:F2}, penalty: {fatiguePenalty:F2}");
                 #endif
             }
 
             // --- Factor 5: Target Openness ---
+            accuracyChance *= teamworkMod;
+
+            // Documentation attributs :
+            // - Vision : réduit la pénalité de distance
+            // - Agility : réduit la pénalité de pression
+            // - Teamwork : bonus si passe entre joueurs synchronisés
+            // - WorkRate & Stamina : réduisent la pénalité de fatigue
+            // - Positioning : bonus si receveur bien placé
+            // - Leadership : réduit la pénalité de pression
+
             float targetOpenness = ActionCalculatorUtils.CalculatePlayerOpenness(target, state);
             accuracyChance *= Mathf.Lerp(ActionResolverConstants.OPENNESS_MIN_FACTOR, 1.0f, targetOpenness);
 

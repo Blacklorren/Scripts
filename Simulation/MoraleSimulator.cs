@@ -74,33 +74,33 @@ namespace HandballManager.Simulation
             if (team == null || team.Roster == null || result == null) return;
 
             // Determine actual outcome for this team
-            MatchOutcome outcome = result.GetOutcomeForTeam(team.TeamID);
+            MatchResult.MatchOutcome outcome = result.GetOutcomeForTeam(team.TeamID);
 
             // Determine Expected Outcome (Simple version based on Reputation)
             TeamData opponent = GetOpponentTeamData(result, team.TeamID, allTeams); // Helper to get opponent data
-            MatchOutcome expectedOutcome = PredictOutcome(team, opponent);
+            MatchResult.MatchOutcome expectedOutcome = PredictOutcome(team, opponent);
 
             float baseMoraleChange = 0f;
             float expectationModifier = 1.0f;
 
             switch (outcome)
             {
-                case MatchOutcome.Win:
+                case MatchResult.MatchOutcome.Win:
                     baseMoraleChange = WIN_MORALE_BOOST_BASE;
-                    if (expectedOutcome == MatchOutcome.Win) expectationModifier = EXPECTED_WIN_MOD;
-                    else if (expectedOutcome == MatchOutcome.Loss) expectationModifier = UNEXPECTED_WIN_MOD; // Upset win
+                    if (expectedOutcome == MatchResult.MatchOutcome.Win) expectationModifier = EXPECTED_WIN_MOD;
+                    else if (expectedOutcome == MatchResult.MatchOutcome.Loss) expectationModifier = UNEXPECTED_WIN_MOD; // Upset win
                     // else (expected draw) modifier = 1.2f; // Slightly bigger boost than expected win
                     break;
-                case MatchOutcome.Draw:
+                case MatchResult.MatchOutcome.Draw:
                     // Change morale based on whether a draw was better/worse than expected
-                    if (expectedOutcome == MatchOutcome.Win) baseMoraleChange = DRAW_VS_EXPECTED_WIN_DROP;
-                    else if (expectedOutcome == MatchOutcome.Loss) baseMoraleChange = DRAW_VS_EXPECTED_LOSS_BOOST;
+                    if (expectedOutcome == MatchResult.MatchOutcome.Win) baseMoraleChange = DRAW_VS_EXPECTED_WIN_DROP;
+                    else if (expectedOutcome == MatchResult.MatchOutcome.Loss) baseMoraleChange = DRAW_VS_EXPECTED_LOSS_BOOST;
                     else baseMoraleChange = DRAW_MORALE_CHANGE; // Expected draw = no change
                     break;
-                case MatchOutcome.Loss:
+                case MatchResult.MatchOutcome.Loss:
                     baseMoraleChange = LOSS_MORALE_DROP_BASE;
-                    if (expectedOutcome == MatchOutcome.Loss) expectationModifier = EXPECTED_LOSS_MOD;
-                    else if (expectedOutcome == MatchOutcome.Win) expectationModifier = UNEXPECTED_LOSS_MOD; // Upset loss
+                    if (expectedOutcome == MatchResult.MatchOutcome.Loss) expectationModifier = EXPECTED_LOSS_MOD;
+                    else if (expectedOutcome == MatchResult.MatchOutcome.Win) expectationModifier = UNEXPECTED_LOSS_MOD; // Upset loss
                      // else (expected draw) modifier = 1.1f; // Slightly bigger drop than expected loss
                     break;
             }
@@ -283,17 +283,17 @@ namespace HandballManager.Simulation
         // --- Helper Methods ---
 
         /// <summary>Placeholder: Predicts the likely outcome of a match based on team reputations.</summary>
-        private MatchOutcome PredictOutcome(TeamData team1, TeamData team2)
+        private MatchResult.MatchOutcome PredictOutcome(TeamData team1, TeamData team2)
         {
-             if (team1 == null || team2 == null) return MatchOutcome.Draw; // Can't predict
+             if (team1 == null || team2 == null) return MatchResult.MatchOutcome.Draw; // Can't predict
 
              // Simple reputation comparison (adjust thresholds as needed)
              float repDiff = team1.Reputation - team2.Reputation;
              float repThreshold = 500; // Example threshold for significant difference
 
-             if (repDiff > repThreshold) return MatchOutcome.Win; // Team1 expected to win
-             if (repDiff < -repThreshold) return MatchOutcome.Loss; // Team1 expected to lose
-             return MatchOutcome.Draw; // Teams are relatively evenly matched
+             if (repDiff > repThreshold) return MatchResult.MatchOutcome.Win; // Team1 expected to win
+             if (repDiff < -repThreshold) return MatchResult.MatchOutcome.Loss; // Team1 expected to lose
+             return MatchResult.MatchOutcome.Draw; // Teams are relatively evenly matched
         }
 
          /// <summary>Placeholder: Gets the opponent's TeamData from a MatchResult.</summary>

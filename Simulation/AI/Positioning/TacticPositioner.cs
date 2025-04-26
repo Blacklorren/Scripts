@@ -565,154 +565,42 @@ namespace HandballManager.Simulation.AI.Positioning // Updated from Engines to A
 
 
         /// <summary>Calculates the base defensive position based on role and tactical system.</summary>
-        /// <remarks>Currently uses hardcoded formation logic. Future: Data-driven.</remarks>
+        /// <remarks>Now data-driven using FormationData.</remarks>
         private Vector2 GetDefensivePosition(SimPlayer player, Tactic tactic)
         {
-            if (player?.BaseData == null) return Vector2.zero; // Safety check
-
-            float goalLineX = (player.TeamSimId == 0) ? 0f : _geometry.PitchLength;
-            float centerGoalY = _geometry.Center.y;
-            float formationWidth = _geometry.PitchWidth * FORMATION_WIDTH_FACTOR_DEF;
-            float halfWidth = formationWidth / 2f;
-            Vector2 position = new(goalLineX, centerGoalY);
-            float depth = DEF_DEPTH_6_0_LINE; // Default depth
-
-            int playerSlotIndex = GetDefensiveSlotIndex(player.BaseData.PrimaryPosition, tactic.DefensiveSystem);
-
-            // Determine depth and Y position based on defensive system and slot
-            int slotCount;
-            switch (tactic.DefensiveSystem)
+            if (player?.BaseData == null) return Vector2.zero;
+            var formation = tactic.DefensiveFormationData;
+            var slot = formation.Slots.FirstOrDefault(s => s.PositionRole == player.BaseData.PrimaryPosition);
+            if (slot == null)
             {
-                case DefensiveSystem.SixZero:
-                    depth = DEF_DEPTH_6_0_LINE;
-                    slotCount = DEF_SLOTS_6_0;
-                    position.y = centerGoalY + Mathf.Lerp(-halfWidth, halfWidth, (float)playerSlotIndex / (slotCount - 1));
-                    break;
-
-                case DefensiveSystem.FiveOne:
-                    if (playerSlotIndex == 2) { // Central player pushes up (Slot 2 assumed point)
-                        depth = DEF_DEPTH_5_1_POINT;
-                        position.y = centerGoalY;
-                    } else {
-                        depth = DEF_DEPTH_5_1_BASE;
-                        slotCount = DEF_SLOTS_5_1_LINE;
-                        int lineIndex = (playerSlotIndex > 2) ? playerSlotIndex - 1 : playerSlotIndex; // Adjust index (0-4)
-                        position.y = centerGoalY + Mathf.Lerp(-halfWidth, halfWidth, (float)lineIndex / (slotCount - 1));
-                    }
-                    break;
-
-                case DefensiveSystem.ThreeTwoOne:
-                    if (playerSlotIndex == 5) { // High player
-                        depth = DEF_DEPTH_321_HIGH; position.y = centerGoalY;
-                    } else if (playerSlotIndex == 3 || playerSlotIndex == 4) { // Mid players
-                        depth = DEF_DEPTH_321_MID;
-                        position.y = centerGoalY + (playerSlotIndex == 3 ? -halfWidth * ATT_WIDTH_FACTOR_MID_PAIR : halfWidth * ATT_WIDTH_FACTOR_MID_PAIR); // Use constant
-                    } else { // Deep players (Slots 0, 1, 2)
-                         depth = DEF_DEPTH_321_DEEP;
-                         slotCount = DEF_SLOTS_321_DEEP;
-                         position.y = centerGoalY + Mathf.Lerp(-halfWidth * ATT_WIDTH_FACTOR_DEEP_321, halfWidth * ATT_WIDTH_FACTOR_DEEP_321, (float)playerSlotIndex / (slotCount - 1)); // Use constants
-                    }
-                    break;
-
-                default: // Fallback to 6-0
-                     depth = DEF_DEPTH_6_0_LINE;
-                     slotCount = DEF_SLOTS_6_0;
-                     position.y = centerGoalY + Mathf.Lerp(-halfWidth, halfWidth, (float)playerSlotIndex / (slotCount - 1));
-                     break;
+                Debug.LogWarning($"[TacticPositioner] No defensive slot for position {player.BaseData.PrimaryPosition} in formation {formation.Name}");
+                return Vector2.zero;
             }
-
-            // Apply depth relative to own goal line
-            position.x += (player.TeamSimId == 0) ? depth : -depth;
-            return position;
+            float relX = slot.RelativePosition.x;
+            float relY = slot.RelativePosition.y;
+            float x = (player.TeamSimId == 0) ? relX * _geometry.PitchLength : (1 - relX) * _geometry.PitchLength;
+            float y = relY * _geometry.PitchWidth;
+            return new Vector2(x, y);
         }
 
-        /// <summary>Gets a representative defensive slot index for a player position and system.</summary>
-        /// <remarks>This mapping is simplified and hardcoded. Needs refinement or data-driven approach.</remarks>
-        private int GetDefensiveSlotIndex(PlayerPosition position, DefensiveSystem system)
-        => system switch
-        {
-            DefensiveSystem.SixZero or DefensiveSystem.FiveOne => position switch
-            {
-                PlayerPosition.LeftWing    => 0,
-                PlayerPosition.LeftBack    => 1,
-                PlayerPosition.CentreBack  => 2, // Central
-                PlayerPosition.Pivot       => 3,      // Central/Offset
-                PlayerPosition.RightBack   => 4,
-                PlayerPosition.RightWing   => 5,
-                _                         => 2, // Fallback central
-            },
-            DefensiveSystem.ThreeTwoOne => position switch
-            {
-                PlayerPosition.CentreBack => 5,
-                _ => 5
-            },
-            _ => GetDefensiveSlotIndex(position, DefensiveSystem.SixZero)
-        };
-
         /// <summary>Calculates the base attacking position based on role.</summary>
-        /// <remarks>Currently uses hardcoded formation logic. Future: Data-driven.</remarks>
-    private Vector2 GetAttackingPosition(SimPlayer player, Tactic tactic) // Tactic needed for Focus Play
-         {
-             if (player?.BaseData == null) return Vector2.zero; // Safety check
-
-             float opponentGoalLineX = (player.TeamSimId == 0) ? _geometry.PitchLength : 0f;
-             float centerGoalY = _geometry.Center.y;
-             float formationWidth = _geometry.PitchWidth * FORMATION_WIDTH_FACTOR_ATT;
-             float halfWidth = formationWidth / 2f;
-             Vector2 position = new(opponentGoalLineX, centerGoalY); // Start relative to opponent goal
-             float depth = ATT_DEPTH_BACK; // Default depth
-
-             // --- Basic Role Positioning ---
-             switch (player.BaseData.PrimaryPosition)
-             {
-                  case PlayerPosition.LeftWing:   depth = ATT_DEPTH_WING;   position.y = centerGoalY - halfWidth * ATT_WIDTH_FACTOR_WING; break;
-                  case PlayerPosition.RightWing:  depth = ATT_DEPTH_WING;   position.y = centerGoalY + halfWidth * ATT_WIDTH_FACTOR_WING; break;
-                  case PlayerPosition.LeftBack:   depth = ATT_DEPTH_BACK;   position.y = centerGoalY - halfWidth * ATT_WIDTH_FACTOR_BACK; break;
-                  case PlayerPosition.RightBack:  depth = ATT_DEPTH_BACK;   position.y = centerGoalY + halfWidth * ATT_WIDTH_FACTOR_BACK; break;
-                  case PlayerPosition.CentreBack: depth = ATT_DEPTH_PLAYMAKER; position.y = centerGoalY; break;
-                  case PlayerPosition.Pivot:      depth = ATT_DEPTH_PIVOT;  position.y = centerGoalY; break; // Pivot finds central space near 6m
-                  default: Debug.LogWarning($"Unhandled player position {player.BaseData.PrimaryPosition} in GetAttackingPosition"); break;
-             }
-
-             // Apply depth relative to opponent goal line (closer = more negative for home, more positive for away)
-             position.x += (player.TeamSimId == 0) ? -depth : depth;
-
-             // --- Adjust based on Tactical Focus Play ---
-              float focusShiftYFactor = 0.2f; // How much players shift inwards/outwards relative to halfWidth
-              float focusShiftX = 1.0f; // How much players shift depth-wise
-
-              switch (tactic.FocusPlay) // Use tactic parameter
-              {
-                   case OffensiveFocusPlay.Wings: // Pull others slightly central/deeper
-                       if (IsBackcourtOrPivot(player.BaseData.PrimaryPosition)) {
-                            position.y = Mathf.Lerp(position.y, centerGoalY, focusShiftYFactor * 0.5f); // Shift 10% towards center
-                            position.x += (player.TeamSimId == 0) ? focusShiftX : -focusShiftX; // Slightly deeper
-                       }
-                       break;
-                   case OffensiveFocusPlay.Backs: // Wings tuck in slightly / hold depth
-                        if (IsWing(player.BaseData.PrimaryPosition)) {
-                             position.x += (player.TeamSimId == 0) ? focusShiftX * 0.5f : -focusShiftX * 0.5f; // Slightly less deep than default
-                             position.y = Mathf.Lerp(position.y, centerGoalY, focusShiftYFactor * 0.5f); // Slightly narrower
-                        }
-                       break;
-                   case OffensiveFocusPlay.Pivot: // Wings and Backs shift slightly central
-                        if (IsWing(player.BaseData.PrimaryPosition) || IsBack(player.BaseData.PrimaryPosition)) {
-                             position.y = Mathf.Lerp(position.y, centerGoalY, focusShiftYFactor); // Shift 20% towards center
-                        }
-                        break;
-                   case OffensiveFocusPlay.Balanced: // No change from base role position
-                   default:
-                       break;
-              }
-
-             return position;
-         }
-
-         // Helper functions for role checks
-         private bool IsWing(PlayerPosition pos) => pos == PlayerPosition.LeftWing || pos == PlayerPosition.RightWing;
-         private bool IsBack(PlayerPosition pos) => pos == PlayerPosition.LeftBack || pos == PlayerPosition.RightBack || pos == PlayerPosition.CentreBack;
-         private bool IsBackcourtOrPivot(PlayerPosition pos) => IsBack(pos) || pos == PlayerPosition.Pivot;
-
+        /// <remarks>Now data-driven using FormationData.</remarks>
+        private Vector2 GetAttackingPosition(SimPlayer player, Tactic tactic)
+        {
+            if (player?.BaseData == null) return Vector2.zero;
+            var formation = tactic.OffensiveFormationData;
+            var slot = formation.Slots.FirstOrDefault(s => s.PositionRole == player.BaseData.PrimaryPosition);
+            if (slot == null)
+            {
+                Debug.LogWarning($"[TacticPositioner] No attacking slot for position {player.BaseData.PrimaryPosition} in formation {formation.Name}");
+                return Vector2.zero;
+            }
+            float relX = slot.RelativePosition.x;
+            float relY = slot.RelativePosition.y;
+            float x = (player.TeamSimId == 0) ? relX * _geometry.PitchLength : (1 - relX) * _geometry.PitchLength;
+            float y = relY * _geometry.PitchWidth;
+            return new Vector2(x, y);
+        }
 
         // --- Adjustments ---
 

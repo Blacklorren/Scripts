@@ -390,7 +390,6 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         /// </summary>
         
         // --- Jump Simulation Fields ---
-        private float jumpTimer = 0f;
         private float jumpDuration = 0f;
         private float jumpHeight = 0f;
         private bool jumpActive = false;
@@ -414,42 +413,42 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         }
     
         /// <summary>
-        /// Updates the player's fatigue based on movement intensity and ball possession.
+        /// Updates the player's stamina based on movement intensity and ball possession.
         /// </summary>
         /// <param name="deltaTime">Time in seconds since last update.</param>
         /// <param name="isHoldingBall">Whether the player is holding the ball (optional).</param>
-        public void UpdateFatigue(float deltaTime, bool isHoldingBall = false)
+        public void UpdateStamina(float deltaTime, bool isHoldingBall = false)
         {
             // Estimate movement intensity as a fraction of max speed
             float movementIntensity = Velocity.magnitude / (EffectiveSpeed > 0f ? EffectiveSpeed : 1f);
-            // Base accumulation rate (tweakable constant)
-            float baseAccumulationRate = 0.07f; // Example: 0.07 fatigue per second at max intensity
-            float possessionMultiplier = isHoldingBall ? 1.25f : 1.0f; // More fatigue when holding ball
+            // Base drain rate (tweakable constant)
+            float baseDrainRate = 0.07f; // Example: 0.07 stamina drained per second at max intensity
+            float possessionMultiplier = isHoldingBall ? 1.25f : 1.0f; // More drain when holding ball
 
-            // Accumulate fatigue from movement and possession
-            float fatigueDelta = movementIntensity * baseAccumulationRate * possessionMultiplier * deltaTime;
-            CurrentFatigue += fatigueDelta;
+            // Drain stamina from movement and possession
+            float staminaDelta = movementIntensity * baseDrainRate * possessionMultiplier * deltaTime;
+            Stamina -= staminaDelta;
 
             // Allow some recovery if player is nearly idle
             if (movementIntensity < 0.1f && !isHoldingBall)
             {
                 float recoveryRate = 0.05f; // Example: recover 0.05 per second when idle
-                CurrentFatigue -= recoveryRate * deltaTime;
+                Stamina += recoveryRate * deltaTime;
             }
 
             // Clamp to [0,1]
-            CurrentFatigue = Mathf.Clamp01(CurrentFatigue);
+            Stamina = Mathf.Clamp01(Stamina);
 
             #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"[Fatigue] Player {BaseData?.FullName} updated fatigue: {CurrentFatigue:F2} (delta: {fatigueDelta:F3})");
+            Debug.Log($"[Stamina] Player {BaseData?.FullName} updated stamina: {Stamina:F2} (delta: {-staminaDelta:F3})");
             #endif
         }
     
         /// <summary>
-        /// Current fatigue level (0 = fully rested, 1 = fully fatigued).
-        /// Fatigue affects pass/interception accuracy and is updated each simulation step.
+        /// Current stamina level (1 = fully rested, 0 = épuisé).
+        /// Stamina affects pass/interception accuracy et est mise à jour à chaque étape de simulation.
         /// </summary>
-        public float CurrentFatigue { get; private set; } = 0f;
+        public float Stamina { get; set; } = 1f;
 
         // --- Static Info (Reference) ---
         /// <summary>Reference to the persistent player data (attributes, contract info etc.).</summary>
@@ -468,8 +467,7 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         public Vector2 Velocity { get; internal set; } // Encapsulated
         /// <summary>True if this player is currently holding the ball.</summary>
         public bool HasBall { get; set; } = false; // Allow external set by SimBall
-        /// <summary>Current stamina level (1.0 = full, 0.0 = empty).</summary>
-        public float Stamina { get; set; } = 1.0f;
+
         /// <summary>True if the player is currently considered active on the court.</summary>
         public bool IsOnCourt { get; set; } = false;
         /// <summary>Seconds remaining if player is serving a suspension.</summary>
@@ -483,6 +481,25 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         /// Timer tracking the remaining duration of the stumbling effect (in seconds).
         /// </summary>
         public float StumbleTimer { get; set; } = 0f;
+
+        // --- Stumbling Mechanics ---
+        private bool isStumbling = false;
+        private float stumbleTimer = 0f;
+        public bool IsStumbling => isStumbling;
+        public float StumbleTimer => stumbleTimer;
+        internal void StartStumble(float duration)
+        {
+            isStumbling = true;
+            stumbleTimer = duration;
+        }
+        internal void UpdateStumble(float deltaTime)
+        {
+            if (isStumbling)
+            {
+                stumbleTimer -= deltaTime;
+                if (stumbleTimer <= 0f) isStumbling = false;
+            }
+        }
 
         /// <summary>The player's current primary action/intent.</summary>
         public PlayerAction CurrentAction { get; set; } = PlayerAction.Idle;
@@ -509,7 +526,7 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         public bool JumpOriginatedOutsideGoalArea { get; set; } = false;
 
         /// <summary>Calculated maximum speed based on base attributes and current stamina.</summary>
-        public float EffectiveSpeed { get; private set; } = 0f;
+        public float EffectiveSpeed { get; internal set; } = 0f;
 
         /// <summary>
         /// Initializes a new SimPlayer instance.

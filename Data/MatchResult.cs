@@ -1,5 +1,6 @@
 using System; // For Serializable, DateTime, Guid
 using System.Collections.Generic;
+using System.Linq;
 using HandballManager.Core;
 using UnityEngine;
 using static HandballManager.Data.TeamMatchStats; // Required for Debug.Log potentially
@@ -57,6 +58,14 @@ namespace HandballManager.Data
     [Serializable]
     public class MatchResult
     {
+        /// <summary>
+        /// Retourne toutes les statistiques individuelles des joueurs pour ce match (PlayerID, PlayerMatchStats).
+        /// </summary>
+        public IEnumerable<(int playerId, PlayerMatchStats stats)> GetAllPlayerStats()
+        {
+            return PlayerPerformances.Select(kvp => (kvp.Key, kvp.Value));
+        }
+
         // --- Core Match Identifiers & Outcome ---
         public Guid MatchID { get; private set; } // Unique identifier for the match
         public int HomeTeamID { get; set; }
@@ -85,21 +94,25 @@ namespace HandballManager.Data
         /// </summary>
         public MatchSnapshotDto FinalMatchSnapshot { get; set; } // DTO now imported from HandballManager.Data
 
-        // Optional: Add more details later if needed
-        // public Dictionary<int, PlayerMatchStats> PlayerStats { get; set; } // PlayerID -> Stats for this match
+        /// <summary>
+        /// Statistiques individuelles des joueurs pour ce match (clé = PlayerID).
+        /// </summary>
+        public Dictionary<int, PlayerMatchStats> PlayerPerformances { get; set; } = new Dictionary<int, PlayerMatchStats>();
         // public int Attendance { get; set; }
 
 
         /// <summary>
         /// Default constructor for serialization only. Do not use for new results.
         /// </summary>
-        public MatchResult() {
-    MatchID = Guid.NewGuid();
-    HomeStats = new TeamMatchStats();
-    AwayStats = new TeamMatchStats();
-    MatchDate = DateTime.MinValue; // Should be set by deserializer
-    MatchEvents = new List<MatchEventDto>();
-}
+        public MatchResult()
+        {
+            PlayerPerformances = new Dictionary<int, PlayerMatchStats>();
+            MatchID = Guid.NewGuid();
+            HomeStats = new TeamMatchStats();
+            AwayStats = new TeamMatchStats();
+            MatchDate = DateTime.MinValue; // Should be set by deserializer
+            MatchEvents = new List<MatchEventDto>();
+        }
 
         /// <summary>
         /// Constructor for MatchResult. Initializes core info and stats objects.
@@ -110,18 +123,18 @@ namespace HandballManager.Data
         /// <param name="awayName">Away Team Name.</param>
         /// <param name="matchDate">Date of the match (must be provided by simulation layer).</param>
         public MatchResult(int homeId, int awayId, string homeName, string awayName, DateTime matchDate)
-{
-    MatchID = Guid.NewGuid();
-    HomeTeamID = homeId;
-    AwayTeamID = awayId;
-    HomeTeamName = homeName ?? "Home";
-    AwayTeamName = awayName ?? "Away";
-    HomeStats = new TeamMatchStats();
-    AwayStats = new TeamMatchStats();
-    MatchDate = matchDate;
-    MatchEvents = new List<MatchEventDto>();
-}
-
+        {
+            PlayerPerformances = new Dictionary<int, PlayerMatchStats>();
+            MatchID = Guid.NewGuid();
+            HomeTeamID = homeId;
+            AwayTeamID = awayId;
+            HomeTeamName = homeName ?? "Home";
+            AwayTeamName = awayName ?? "Away";
+            HomeStats = new TeamMatchStats();
+            AwayStats = new TeamMatchStats();
+            MatchDate = matchDate;
+            MatchEvents = new List<MatchEventDto>();
+        }
 
          /// <summary>
          /// Returns a string representation of the match scoreline.
@@ -157,7 +170,7 @@ namespace HandballManager.Data
                  return MatchOutcome.Draw; // Or throw exception? Return Draw for safety.
              }
          }
-    }
+    
 
      /// <summary>
      /// Represents the outcome of a match for one team.
@@ -168,5 +181,5 @@ namespace HandballManager.Data
          Draw,
          Loss
      }
-
+    }
 } 

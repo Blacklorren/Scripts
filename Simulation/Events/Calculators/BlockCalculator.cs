@@ -104,13 +104,28 @@ namespace HandballManager.Simulation.Events.Calculators
                 else if (now > defenderAttemptTime) timingCat = BlockTimingCategory.Late;
                 else timingCat = BlockTimingCategory.None;
                 // --- Block probability ---
-                float blockSkill = defender.BaseData.Blocking;
-                float height = defender.BaseData.Height;
-                float jumping = defender.BaseData.Jumping;
-                float agility = defender.BaseData.Agility;
-                float bravery = defender.BaseData.Bravery;
-                float positioning = defender.BaseData.Positioning;
-                float blockScore = blockSkill * 0.35f + height * 0.15f + jumping * 0.15f + agility * 0.10f + bravery * 0.10f + positioning * 0.15f;
+                float blockSkill = defender.BaseData.Blocking; // Block probability modified by BaseData.Blocking
+                float height = defender.BaseData.Height;       // Block probability modified by BaseData.Height
+                float jumping = defender.BaseData.Jumping;     // Block probability modified by BaseData.Jumping
+                float agility = defender.BaseData.Agility;     // Block probability modified by BaseData.Agility
+                float bravery = defender.BaseData.Bravery;     // Block probability modified by BaseData.Bravery
+                float positioning = defender.BaseData.Positioning; // Block probability modified by BaseData.Positioning
+                float reflexes = defender.BaseData.Reflexes;   // Block probability modified by BaseData.Reflexes (especially for GK/last-ditch blocks)
+                float workRate = defender.BaseData.WorkRate;   // Block probability modified by BaseData.WorkRate (effort/coverage)
+                float determination = defender.BaseData.Determination; // Block probability modified by BaseData.Determination (contest under pressure)
+
+                // Weighted sum: Blocking (30%), Height (10%), Jumping (10%), Agility (10%), Bravery (10%), Positioning (10%), Reflexes (10%), WorkRate (5%), Determination (5%)
+                float blockScore =
+                    blockSkill * 0.30f +
+                    height * 0.10f +
+                    jumping * 0.10f +
+                    agility * 0.10f +
+                    bravery * 0.10f +
+                    positioning * 0.10f +
+                    reflexes * 0.10f +
+                    workRate * 0.05f +
+                    determination * 0.05f; // All attributes above contribute to block probability
+
                 float deceptionPenalty = Mathf.Clamp01(shotDeception / 100f) * 0.25f;
                 float anglePenalty = 1f - angleCos;
                 float distPenalty = Mathf.Clamp01(dist / BLOCK_RADIUS) * 0.2f;

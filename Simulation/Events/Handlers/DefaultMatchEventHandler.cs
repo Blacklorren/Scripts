@@ -43,7 +43,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
 
-        public void HandleActionResult(ActionResult result, MatchState state)
+        public virtual void HandleActionResult(ActionResult result, MatchState state)
         {
             // Passive play turnovers are now handled via the SimBall.OnPassCompletedBetweenTeammates event in MatchSimulator.
             // No direct check needed here.
@@ -88,7 +88,7 @@ namespace HandballManager.Simulation.Events.Handlers
               // Optionally reset TargetPosition: player.TargetPosition = player.Position;
         }
 
-        public void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
+        public virtual void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
         {
             // Réinitialiser le jeu passif sur changement de possession
             _passivePlayManager?.ResetPassivePlay();
@@ -127,7 +127,7 @@ namespace HandballManager.Simulation.Events.Handlers
              _phaseManager.TransitionToPhase(state, nextPhase); // Use injected PhaseManager
         }
 
-        public void LogEvent(MatchState state, string description, int? teamId = null, int? playerId = null)
+        public virtual void LogEvent(MatchState state, string description, int? teamId = null, int? playerId = null)
         {
             // --- Logic copied from MatchSimulator ---
             if (state?.MatchEvents == null) return;
@@ -186,8 +186,17 @@ namespace HandballManager.Simulation.Events.Handlers
             else { LogEvent(state, $"Action failed: {reason}."); HandlePossessionChange(state, -1, true); }
         }
 
-        public void HandleTurnover(ActionResult result, MatchState state)
+        public virtual void HandleTurnover(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.PrimaryPlayer != null)
+            {
+                int turnoverId = result.PrimaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(turnoverId))
+                    state.PlayerStats[turnoverId] = new PlayerMatchStats();
+                state.PlayerStats[turnoverId].Turnovers++;
+                state.PlayerStats[turnoverId].Participated = true;
+            }
             // Réinitialiser le jeu passif sur turnover explicite
             _passivePlayManager?.ResetPassivePlay();
 
@@ -200,6 +209,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleInterception(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.SecondaryPlayer != null)
+            {
+                int interceptorId = result.SecondaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(interceptorId))
+                    state.PlayerStats[interceptorId] = new PlayerMatchStats();
+                state.PlayerStats[interceptorId].Interceptions++;
+                state.PlayerStats[interceptorId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
              SimPlayer interceptor = result.PrimaryPlayer; SimPlayer passer = result.SecondaryPlayer;
              if (interceptor?.BaseData == null) { Debug.LogError("[DefaultMatchEventHandler] Interception handled with null interceptor."); HandlePossessionChange(state, -1, true); return; }
@@ -216,6 +234,24 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleSave(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.SecondaryPlayer != null)
+            {
+                int gkId = result.SecondaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(gkId))
+                    state.PlayerStats[gkId] = new PlayerMatchStats();
+                state.PlayerStats[gkId].SavesMade++;
+                state.PlayerStats[gkId].Participated = true;
+            }
+            if (result.PrimaryPlayer != null)
+            {
+                int shooterId = result.PrimaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(shooterId))
+                    state.PlayerStats[shooterId] = new PlayerMatchStats();
+                state.PlayerStats[shooterId].ShotsTaken++;
+                state.PlayerStats[shooterId].ShotsOnTarget++;
+                state.PlayerStats[shooterId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
             SimPlayer gk = result.PrimaryPlayer; SimPlayer shooter = result.SecondaryPlayer;
             if (gk?.BaseData == null) { Debug.LogError("[DefaultMatchEventHandler] Save handled with null Goalkeeper."); HandlePossessionChange(state, -1, true); if (shooter != null) ResetPlayerActionState(shooter, result.Outcome); return; }
@@ -231,6 +267,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleBlock(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.SecondaryPlayer != null)
+            {
+                int blockerId = result.SecondaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(blockerId))
+                    state.PlayerStats[blockerId] = new PlayerMatchStats();
+                state.PlayerStats[blockerId].BlocksMade++;
+                state.PlayerStats[blockerId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
             SimPlayer blocker = result.PrimaryPlayer; SimPlayer shooter = result.SecondaryPlayer;
             Vector2 impactPos = result.ImpactPosition ?? blocker?.Position ?? CoordinateUtils.To2DGround(state.Ball.Position);
@@ -288,6 +333,25 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleGoalScored(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.PrimaryPlayer != null)
+            {
+                int playerId = result.PrimaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(playerId))
+                    state.PlayerStats[playerId] = new PlayerMatchStats();
+                state.PlayerStats[playerId].GoalsScored++;
+                state.PlayerStats[playerId].ShotsTaken++;
+                state.PlayerStats[playerId].ShotsOnTarget++;
+                state.PlayerStats[playerId].Participated = true;
+            }
+            if (result.SecondaryPlayer != null && result.SecondaryPlayer != result.PrimaryPlayer)
+            {
+                int assistId = result.SecondaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(assistId))
+                    state.PlayerStats[assistId] = new PlayerMatchStats();
+                state.PlayerStats[assistId].Assists++;
+                state.PlayerStats[assistId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
             SimPlayer scorer = result.PrimaryPlayer;
             if (scorer?.BaseData == null) { LogEvent(state, "Goal registered with invalid scorer data!"); _phaseManager?.TransitionToPhase(state, GamePhase.Finished); return; } // Use PhaseManager
@@ -307,6 +371,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleMiss(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.PrimaryPlayer != null)
+            {
+                int shooterId = result.PrimaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(shooterId))
+                    state.PlayerStats[shooterId] = new PlayerMatchStats();
+                state.PlayerStats[shooterId].ShotsTaken++;
+                state.PlayerStats[shooterId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
             SimPlayer shooter = result.PrimaryPlayer;
             if (shooter?.BaseData != null) { LogEvent(state, $"Shot by {shooter.BaseData.FullName} missed target.", shooter.GetTeamId(), shooter.GetPlayerId()); ResetPlayerActionState(shooter, result.Outcome); }
@@ -316,6 +389,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleFoul(ActionResult result, MatchState state)
         {
+            // --- Suivi des stats individuelles ---
+            if (result.PrimaryPlayer != null)
+            {
+                int foulerId = result.PrimaryPlayer.GetPlayerId();
+                if (!state.PlayerStats.ContainsKey(foulerId))
+                    state.PlayerStats[foulerId] = new PlayerMatchStats();
+                state.PlayerStats[foulerId].FoulsCommitted++;
+                state.PlayerStats[foulerId].Participated = true;
+            }
             // --- Logic copied from MatchSimulator ---
             SimPlayer committer = result.PrimaryPlayer;
             SimPlayer victim = result.SecondaryPlayer;
@@ -356,7 +438,7 @@ namespace HandballManager.Simulation.Events.Handlers
         }
 
 
-        public void HandleOutOfBounds(ActionResult result, MatchState state, Vector3? intersectionPoint3D = null)
+        public virtual void HandleOutOfBounds(ActionResult result, MatchState state, Vector3? intersectionPoint3D = null)
         {
              // --- Logic copied from MatchSimulator ---
              if (state?.Ball == null) { return; }
@@ -481,7 +563,7 @@ protected void IncrementStat(MatchState state, int teamSimId, Action<TeamMatchSt
         /// </summary>
         /// <param name="state">Current match state</param>
         /// <param name="newPhase">Target phase to transition to</param>
-        public void TransitionToPhase(MatchState state, GamePhase newPhase)
+        public virtual void TransitionToPhase(MatchState state, GamePhase newPhase)
         {
             // Validation checks
             if (state == null)

@@ -145,14 +145,38 @@ namespace HandballManager.Simulation.Physics
             Vector2 finalTargetVelocity = (finalTargetSpeed > 0.01f) ? targetVelocity.normalized * finalTargetSpeed : Vector2.zero;
             Vector2 requiredAcceleration = (finalTargetVelocity - currentVelocity) / deltaTime;
 
-            float agilityFactor = Mathf.Lerp(PLAYER_AGILITY_MOD_MIN, PLAYER_AGILITY_MOD_MAX, (player.BaseData?.Agility ?? 50f) / 100f);
-            float maxAccel = PLAYER_ACCELERATION_BASE * agilityFactor;
-            float maxDecel = PLAYER_DECELERATION_BASE * agilityFactor;
+            // Agility affects acceleration/deceleration
+            float agilityFactor = Mathf.Lerp(PLAYER_AGILITY_MOD_MIN, PLAYER_AGILITY_MOD_MAX, (player.BaseData?.Agility ?? 50f) / 100f); // Modified by BaseData.Agility
+            // Strength affects resistance to deceleration (higher = less slowdown from collisions)
+            float strengthFactor = Mathf.Lerp(0.9f, 1.1f, (player.BaseData?.Strength ?? 50f) / 100f); // Modified by BaseData.Strength
+            float maxAccel = PLAYER_ACCELERATION_BASE * agilityFactor * strengthFactor;
+            float maxDecel = PLAYER_DECELERATION_BASE * agilityFactor / strengthFactor; // Stronger = less deceleration
+
+            // Speed directly affects effective speed
+            player.EffectiveSpeed = Mathf.Lerp(4.0f, 7.5f, (player.BaseData?.Speed ?? 50f) / 100f); // Modified by BaseData.Speed
+
+            // WorkRate increases willingness to sprint (lowers sprint threshold) and increases stamina drain
+            float workRateFactor = Mathf.Lerp(1.0f, 1.2f, (player.BaseData?.WorkRate ?? 50f) / 100f); // Modified by BaseData.WorkRate
+
+            // Stamina affects stamina drain (higher stamina = less drain)
+            float staminaDrainMod = Mathf.Lerp(1.3f, 0.7f, (player.BaseData?.Stamina ?? 50f) / 100f); // Modified by BaseData.Stamina
+
+            // NaturalFitness affects stamina recovery rate
+            float naturalFitnessRecoveryMod = Mathf.Lerp(0.8f, 1.2f, (player.BaseData?.NaturalFitness ?? 50f) / 100f); // Modified by BaseData.NaturalFitness
+
+            // Resilience affects fatigue resistance (less fatigue from physical actions)
+            float resilienceFatigueMod = Mathf.Lerp(1.2f, 0.8f, (player.BaseData?.Resilience ?? 50f) / 100f); // Modified by BaseData.Resilience
+
+            // Jumping affects jump height (used in jump logic elsewhere)
+            // See jump mechanics for usage of BaseData.Jumping
+
 
             bool isAccelerating = Vector2.Dot(requiredAcceleration, currentVelocity.normalized) > -0.1f || currentSpeed < PLAYER_NEAR_STOP_VELOCITY_THRESHOLD;
             float maxAccelerationMagnitude = isAccelerating ? maxAccel : maxDecel;
 
             Vector2 appliedAcceleration = Vector2.ClampMagnitude(requiredAcceleration, maxAccelerationMagnitude);
+            if (player.IsStumbling)
+                appliedAcceleration *= SimConstants.STUMBLE_ACCELERATION_FACTOR;
             player.Velocity += appliedAcceleration * deltaTime;
 
             // Clamp final velocity to prevent excessive speed
@@ -161,6 +185,8 @@ namespace HandballManager.Simulation.Physics
             {
                 player.Velocity = player.Velocity.normalized * maxAllowedSpeed;
             }
+            if (player.IsStumbling)
+                player.Velocity *= SimConstants.STUMBLE_SPEED_FACTOR;
         }
 
         /// <summary>
@@ -219,19 +245,22 @@ namespace HandballManager.Simulation.Physics
             {
                 if (player == null || player.SuspensionTimer > 0) continue;
 
+                player.UpdateJumpRecovery(deltaTime);
+                player.UpdateStumble(deltaTime);
+
                 Vector2 previousPosition = player.Position;
                 Vector2 targetVelocity = CalculateActionTargetVelocity(player, out bool allowSprint, out bool applyArrivalSlowdown);
                 ApplyAcceleration(player, targetVelocity, allowSprint, applyArrivalSlowdown, deltaTime);
                 player.Position += player.Velocity * deltaTime;
 
-                // --- Fatigue System: Update fatigue based on movement ---
-                // --- Fatigue System: Update fatigue based on match progression ---
+                // --- Stamina System: Update stamina based on movement ---
+                // --- Stamina System: Update stamina based on match progression ---
                 float matchProgress = Mathf.Clamp01(state.MatchTimeSeconds / Mathf.Max(1f, state.MatchDurationSeconds));
                 float accumulationMultiplier = Mathf.Lerp(1.0f, 2.0f, matchProgress); // up to 2x at end
                 float recoveryMultiplier = Mathf.Lerp(1.0f, 0.5f, matchProgress); // down to 0.5x at end
 
-                Debug.Log($"[FatigueMult] Time: {state.MatchTimeSeconds:F1}/{state.MatchDurationSeconds:F1} ({matchProgress:P1}) | Accum: {accumulationMultiplier:F2}, Recov: {recoveryMultiplier:F2}");
-                player.UpdateFatigue(deltaTime, player.HasBall);
+                Debug.Log($"[StaminaMult] Time: {state.MatchTimeSeconds:F1}/{state.MatchDurationSeconds:F1} ({matchProgress:P1}) | Accum: {accumulationMultiplier:F2}, Recov: {recoveryMultiplier:F2}");
+                player.UpdateStamina(deltaTime, player.HasBall);
 
                 // --- Goal Area Violation Enforcement (Handball 6m Zone Rules) ---
                 bool inGoalArea = IsInGoalArea(player.Position, player.TeamSimId, _geometry);
@@ -290,9 +319,42 @@ namespace HandballManager.Simulation.Physics
 
                 _staminaManager?.ApplyStaminaEffects(player, deltaTime);
 
-                // Step tracking logic
+                // Step and Dribble tracking logic
                 if (player.BaseData is HandballManager.Data.PlayerData pdata)
                 {
+                    // --- Double Dribble Detection ---
+                    // If player attempts to start dribbling again after already dribbling since possession
+                    if (player.HasBall && player.WantsToDribble) // You may need to replace WantsToDribble with the actual intent flag
+                    {
+                        if (pdata.IsDribbling)
+                        {
+                            // Already dribbling, continue
+                        }
+                        else if (pdata.HasDribbledSincePossession)
+                        {
+                            // Double dribble detected
+                            _turnoverHandler?.Invoke(player, state, "Double Dribble");
+                        }
+                        else
+                        {
+                            pdata.StartDribble();
+                        }
+                    }
+                    // --- Step Counting ---
+                    if (player.HasBall && !pdata.IsDribbling)
+                    {
+                        pdata.IncrementStep();
+                        if (pdata.ExceededStepLimit())
+                        {
+                            _turnoverHandler?.Invoke(player, state, "Step Violation");
+                        }
+                    }
+                    // Reset steps and dribble state on possession loss
+                    if (!player.HasBall)
+                    {
+                        pdata.LosePossession();
+                    }
+
                     // --- Jumping Mechanics Update ---
                     // Track jump state transitions for zone logic
                     // (wasJumping, isJumping, isLanding already computed above)

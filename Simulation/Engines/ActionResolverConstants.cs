@@ -13,7 +13,7 @@ namespace HandballManager.Simulation.Engines // Updated namespace to match new f
         public const float MIN_DISTANCE_CHECK_SQ = 0.01f; // Squared distance threshold for near-zero checks
         public const float GOAL_LINE_BUFFER = 0.01f; // 1cm buffer for goal line crossing detection
 
-        // Fatigue System Constants
+        // Stamina System Constants (fatigue = 1 - Stamina)
         public const float FATIGUE_ACCUMULATION_RATE = 0.02f;   // How quickly fatigue accumulates with movement (per second at full effort) - tuned for realism
         public const float FATIGUE_RECOVERY_RATE = 0.025f;      // How quickly fatigue recovers when resting (per second) - tuned for realism
         public const float FATIGUE_RECOVERY_THRESHOLD = 0.18f;  // Movement intensity below which recovery occurs (fraction of max speed)
@@ -51,7 +51,7 @@ namespace HandballManager.Simulation.Engines // Updated namespace to match new f
         public const float INTERCEPTION_PASS_SPEED_MAX_PENALTY = 0.5f; // Max penalty (50%) for fastest passes
         public const float INTERCEPTION_CLOSING_FACTOR_MIN_SCALE = 0.5f; // Min multiplier if moving directly away
         public const float INTERCEPTION_CLOSING_FACTOR_MAX_SCALE = 1.2f; // Max multiplier if moving directly towards
-        // Fatigue penalty for interception (based on real-world handball athlete data)
+        // Stamina penalty for interception (fatigue = 1 - Stamina, based on real-world handball athlete data)
         // At max fatigue, interception chance is reduced by up to 35% (typical observed technical decline is 20-40%)
         public const float INTERCEPTION_FATIGUE_MIN_EFFECT = 0.0f;  // No penalty when fresh
         public const float INTERCEPTION_FATIGUE_MAX_EFFECT = 0.35f; // 35% penalty at max fatigue
