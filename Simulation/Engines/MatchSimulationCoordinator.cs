@@ -128,7 +128,7 @@ namespace HandballManager.Simulation.Engines
             int randomSeed = Environment.TickCount ^ Guid.NewGuid().GetHashCode();
 
             // Create a new MatchState with provided tactics and seed
-            var matchState = new MatchState(home, away, homeTactic, awayTactic, randomSeed);
+            var matchState = new MatchState(home, away, homeTactic, awayTactic, randomSeed, DateTime.Now);
             _engine = (IMatchEngine)_simulatorFactory.Create(matchState);
 
             _eventBus.Publish(new MatchStartedEvent {

@@ -96,6 +96,20 @@ namespace HandballManager.Simulation.Events.Calculators
             if (severityRoll < redCardThreshold) { severity = FoulSeverity.RedCard; }
             else if (severityRoll < twoMinuteThreshold) { severity = FoulSeverity.TwoMinuteSuspension; }
 
+            // --- Disciplinary escalation logic ---
+            // If already has yellow card and would get another, escalate to suspension
+            if (severity == FoulSeverity.FreeThrow || severity == FoulSeverity.PenaltyThrow)
+            {
+                if (tackler.YellowCardCount > 0)
+                {
+                    severity = FoulSeverity.TwoMinuteSuspension;
+                }
+            }
+            // If already has two suspensions, escalate to red card
+            if (severity == FoulSeverity.TwoMinuteSuspension && tackler.TwoMinuteSuspensionCount >= 2)
+            {
+                severity = FoulSeverity.RedCard;
+            }
             // TODO: Add logic for OffensiveFoul based on movement/charge?
 
             return severity;

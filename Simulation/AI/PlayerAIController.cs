@@ -52,7 +52,7 @@ namespace HandballManager.Simulation.AI
         private const float LOOSE_BALL_REACTION_RANGE_MULTIPLIER = 1.8f;
         private const float ARRIVAL_VELOCITY_DAMPING_FACTOR = 0.5f;
         private const float PREP_VELOCITY_DAMPING_FACTOR = 0.1f;
-        private const float MIN_ACTION_TIMER = 0.1f;
+        private const float MIN_ACTION_TIMER = 0.5f; // Plus réaliste : 500 ms pour simuler la prise de décision humaine
 
         // Score Adjustment Factors (Magic Number replacements)
         private const float DRIBBLING_RISK_ADJUSTMENT = 0.9f;
@@ -222,53 +222,172 @@ namespace HandballManager.Simulation.AI
         /// Analyse l'état du match et déclenche un remplacement tactique si nécessaire (IA).
         /// Critère : si un joueur sur le terrain a une fatigue > 0.9 et qu'un remplaçant frais (<0.5) est dispo sur le banc.
         /// </summary>
+        // --- Substitution Cooldown State ---
+        private float _lastSubstitutionTimeHome = -999f;
+        private float _lastSubstitutionTimeAway = -999f;
+        private const float SUB_COOLDOWN_SECONDS = 30f; // Prevent more than one sub per team per 30s
+
         private void EvaluateAndPerformSubstitutions(MatchState state)
         {
             if (_matchSimulator == null || state == null)
                 return;
+            float now = state.MatchTimeSeconds; // Assumes MatchState exposes current time in seconds
+
             // Home team
-            foreach (var playerOut in state.HomePlayersOnCourt)
+            if (now - _lastSubstitutionTimeHome >= SUB_COOLDOWN_SECONDS)
             {
-                if (playerOut == null || playerOut.IsSuspended() || !playerOut.IsOnCourt) continue;
-                if (playerOut.Stamina < 0.1f)
+                foreach (var playerOut in state.HomePlayersOnCourt)
                 {
-                    var candidate = state.HomeBench.FirstOrDefault(p => p != null && p.Stamina > 0.5f && !p.IsSuspended() && !p.IsOnCourt);
+                    if (playerOut == null || playerOut.IsSuspended() || !playerOut.IsOnCourt)
+                        continue;
+
+                    // --- Substitution Criteria ---
+                    bool needsSub = false;
+                    // 1. Stamina
+                    if (playerOut.Stamina < 0.1f)
+                        needsSub = true;
+                    // 2. Injury
+                    else if (playerOut.BaseData != null && playerOut.BaseData.IsInjured(state.MatchDate))
+                        needsSub = true;
+                    // 3. Performance (example: very low current ability, could be replaced with match rating)
+                    else if (playerOut.BaseData != null && playerOut.BaseData.CurrentAbility < 30) // Threshold can be tuned
+                        needsSub = true;
+                    // 4. Tactical (placeholder: e.g., role mismatch)
+                    // TODO: Integrate tactical evaluator for smarter checks
+
+                    if (!needsSub)
+                        continue;
+
+                    // --- Find Bench Candidate ---
+                    var candidate = state.HomeBench
+                        .Where(p => p != null
+                                    && !p.IsSuspended()
+                                    && !p.IsOnCourt
+                                    && !p.BaseData.IsInjured(state.MatchDate)
+                                    && p.Stamina > 0.5f
+                                    && (p.BaseData.PrimaryPosition == playerOut.AssignedTacticalRole
+                                        || p.BaseData.PrimaryPosition == playerOut.BaseData.PrimaryPosition))
+                        .OrderByDescending(p => p.Stamina)
+                        .FirstOrDefault();
+
                     if (candidate != null)
                     {
                         if (_matchSimulator.TrySubstitute(playerOut, candidate))
-                            break; // Un remplacement à la fois par tick
+                        {
+                            _lastSubstitutionTimeHome = now;
+                            // Reset negative performance stats for the player who just left
+                            if (state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
+                            {
+                                stats.Turnovers = 0;
+                                stats.ShotsTaken = 0;
+                                stats.ShotsOnTarget = 0;
+                                stats.FoulsCommitted = 0;
+                            }
+                            break; // Only one sub per tick per team
+                        }
                     }
                 }
             }
+
             // Away team
-            foreach (var playerOut in state.AwayPlayersOnCourt)
+            if (now - _lastSubstitutionTimeAway >= SUB_COOLDOWN_SECONDS)
             {
-                if (playerOut == null || playerOut.IsSuspended() || !playerOut.IsOnCourt) continue;
-                if (playerOut.Stamina < 0.1f)
+                foreach (var playerOut in state.AwayPlayersOnCourt)
                 {
-                    var candidate = state.AwayBench.FirstOrDefault(p => p != null && p.Stamina > 0.5f && !p.IsSuspended() && !p.IsOnCourt);
+                    if (playerOut == null || playerOut.IsSuspended() || !playerOut.IsOnCourt)
+                        continue;
+
+                    bool needsSub = false;
+                    if (playerOut.Stamina < 0.1f)
+                        needsSub = true;
+                    else if (playerOut.BaseData != null && playerOut.BaseData.IsInjured(state.MatchDate))
+                        needsSub = true;
+                    else if (playerOut.BaseData != null && state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
+                    {
+                        int missedShots = stats.ShotsTaken - stats.ShotsOnTarget;
+                        if (missedShots >= 3 || stats.Turnovers >= 2 || stats.FoulsCommitted >= 3)
+                            needsSub = true;
+                    }
+                    // TODO: Tactical needs
+
+                    if (!needsSub)
+                        continue;
+
+                    var candidate = state.AwayBench
+                        .Where(p => p != null
+                                    && !p.IsSuspended()
+                                    && !p.IsOnCourt
+                                    && !p.BaseData.IsInjured(state.MatchDate)
+                                    && p.Stamina > 0.5f
+                                    && (p.BaseData.PrimaryPosition == playerOut.AssignedTacticalRole
+                                        || p.BaseData.PrimaryPosition == playerOut.BaseData.PrimaryPosition))
+                        .OrderByDescending(p => p.Stamina)
+                        .FirstOrDefault();
+
                     if (candidate != null)
                     {
                         if (_matchSimulator.TrySubstitute(playerOut, candidate))
+                        {
+                            _lastSubstitutionTimeAway = now;
+                            // Reset negative performance stats for the player who just left
+                            if (state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
+                            {
+                                stats.Turnovers = 0;
+                                stats.ShotsTaken = 0;
+                                stats.ShotsOnTarget = 0;
+                                stats.FoulsCommitted = 0;
+                            }
                             break;
+                        }
                     }
                 }
             }
         }
 
-        /// <summary>
-        /// Decides the best off-ball action (including setting screens) for a player without the ball.
-        /// </summary>
+        /// <summary>Decides the best off-ball action (including setting screens) for a player without the ball.</summary>
         private void DecideOffBallAction(SimPlayer player, MatchState state, Tactic tactic)
         {
             if (player?.BaseData == null || state == null || tactic == null) return;
             if (player.HasBall) return; // Defensive: Only off-ball
 
+            // --- Filtre : seuls le pivot et les ailiers peuvent poser un écran ---
+            var pos = player.BaseData.PrimaryPosition;
+            if (pos != PlayerPosition.Pivot && pos != PlayerPosition.LeftWing && pos != PlayerPosition.RightWing)
+            {
+                // Les autres postes ne posent pas d'écran, déplacement tactique off-ball
+                SetPlayerToMoveToTacticalPosition(player, state, tactic);
+                return;
+            }
+
             // Evaluate screen opportunity
             var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
             var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
             if (screenOpportunity != null)
+            {
+                float phaseScreenModifier = 1f;
+                bool isAttacking = player.TeamSimId == state.PossessionTeamId;
+                switch (state.CurrentPhase)
+                {
+                    case GamePhase.HomeAttack:
+                    case GamePhase.AwayAttack:
+                        phaseScreenModifier = isAttacking ? 1.0f : 0.5f; // Normal en attaque, rare en défense
+                        break;
+                    case GamePhase.TransitionToHomeAttack:
+                    case GamePhase.TransitionToAwayAttack:
+                        phaseScreenModifier = isAttacking ? 0.8f : 0.3f; // Moins fréquent en transition
+                        break;
+                    case GamePhase.HomeSetPiece:
+                    case GamePhase.AwaySetPiece:
+                    case GamePhase.HomePenalty:
+                    case GamePhase.AwayPenalty:
+                        phaseScreenModifier = isAttacking ? 1.2f : 0.2f; // Très rare en défense sur set play
+                        break;
+                    default:
+                        phaseScreenModifier = isAttacking ? 0.5f : 0.1f; // Défense = quasi jamais de screen
+                        break;
+                }
                 screenOpportunity.Confidence *= phaseScreenModifier;
+            }
             if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
             {
                 // Use new ScreenDecisionData for screen positioning
@@ -290,10 +409,7 @@ namespace HandballManager.Simulation.AI
             SetPlayerToMoveToTacticalPosition(player, state, tactic);
         }
 
-        /// <summary>
-        /// Determines the best action for a specific player based on the current game state.
-        /// Implementation of IPlayerAIController.DeterminePlayerAction
-        /// </summary>
+        /// <summary>Determines the best action for a specific player based on the current game state.</summary>
         /// <param name="state">The current match state.</param>
         /// <param name="player">The player to make a decision for.</param>
         /// <returns>The action the player should take.</returns>
@@ -339,8 +455,7 @@ namespace HandballManager.Simulation.AI
         #endregion
 
         #region Core Decision Logic
-        /// <summary>
-        /// Core decision logic router for a single player. Delegates specific evaluations
+        /// <summary>Core decision logic router for a single player. Delegates specific evaluations
         /// to specialized components and sets the player's intended action.
         /// </summary>
         /// <param name="player">The player making the decision.</param>
@@ -921,7 +1036,8 @@ namespace HandballManager.Simulation.AI
                         }
                         else
                         {
-                            SetPlayerAction(player, PlayerAction.HoldingBall, MIN_ACTION_TIMER, 0f, state);
+                            // Remplacement de HoldingBall par Idle, car la possession est déjà gérée par player.HasBall
+                            SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
                         }
                     }
                 }
@@ -961,9 +1077,37 @@ namespace HandballManager.Simulation.AI
 
         private bool EvaluateSetPieceShootingChance(SimPlayer player, MatchState state, Tactic tactic)
         {
-            float shootSkill = player.BaseData?.Shoot ?? 0f;
-            // Simplified: shoot if skill above threshold
-            return shootSkill > 60f;
+            // --- Seul cas où on tire : moins de 2s avant la fin OU jeu passif (1 passe ou moins) ---
+            float secondsLeft;
+            float matchDuration = state.MatchDurationSeconds > 0 ? state.MatchDurationSeconds : 3600f; // fallback 1h
+            float halfDuration = matchDuration / 2f;
+            if (state.MatchTimeSeconds < halfDuration) // 1ère mi-temps
+                secondsLeft = halfDuration - state.MatchTimeSeconds;
+            else // 2ème mi-temps
+                secondsLeft = matchDuration - state.MatchTimeSeconds;
+            bool isEndOfHalf = secondsLeft < 2.0f;
+
+            // Accès au PassivePlayManager via le MatchSimulator injecté (pas via MatchState)
+            var passiveManager = GetPassivePlayManagerFromSimulator(_matchSimulator);
+            bool isPassiveWarning = passiveManager?.PassivePlayWarningActive == true;
+            int passesSinceWarning = passiveManager?.PassesSinceWarning ?? int.MaxValue;
+            bool isEndOfPassive = isPassiveWarning && passesSinceWarning >= 3; // 4 passes après warning
+
+            return isEndOfHalf || isEndOfPassive;
+        }
+
+        /// <summary>
+        /// Safely retrieves the PassivePlayManager instance from the given MatchSimulator.
+        /// Returns null if the simulator or manager is unavailable.
+        /// </summary>
+        /// <param name="simulator">The MatchSimulator instance (should be injected).</param>
+        /// <returns>The PassivePlayManager instance, or null if unavailable.</returns>
+        private PassivePlayManager GetPassivePlayManagerFromSimulator(MatchSimulator simulator)
+        {
+            // Defensive: null check and property access
+            if (simulator == null)
+                return null;
+            return simulator.PassivePlayManager;
         }
         #endregion
 

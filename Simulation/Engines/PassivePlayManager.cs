@@ -28,6 +28,10 @@ namespace HandballManager.Simulation.Engines
         private const int PASSES_AFTER_WARNING_LIMIT = 4;
 
         private int _passesSinceWarning = 0;
+        /// <summary>
+        /// Number of passes made since the passive play warning was issued.
+        /// </summary>
+        public int PassesSinceWarning => _passesSinceWarning;
         private MatchState _matchState;
         private int _previousPossessionTeamId = -2; // -2 means uninitialized
 

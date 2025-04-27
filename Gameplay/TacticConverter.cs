@@ -1,4 +1,5 @@
 using HandballManager.Data;
+using HandballManager.Core;
 using System;
 
 namespace HandballManager.Gameplay
@@ -15,7 +16,7 @@ namespace HandballManager.Gameplay
             {
                 TacticID = tactic.TacticID,
                 Name = tactic.TacticName,
-                Type = tactic.OffensiveFormationName, // Store formation names
+                Type = tactic.OffensiveFormation, // Store formation names
                 OffensiveFormationName = tactic.OffensiveFormationData.Name,
                 DefensiveFormationName = tactic.DefensiveFormationData.Name,
                 Description = $"DefSys: {tactic.DefensiveSystem}, Pace: {tactic.Pace}"

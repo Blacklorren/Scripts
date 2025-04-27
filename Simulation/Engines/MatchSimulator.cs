@@ -52,6 +52,13 @@ namespace HandballManager.Simulation.Engines
         // --- Simulation State (Managed Externally, Passed In) ---
         private readonly MatchState _state;
         private PassivePlayManager _passivePlayManager;
+    /// <summary>
+    /// Public getter for the PassivePlayManager instance (used by AI controllers for passive play logic).
+    /// </summary>
+    public PassivePlayManager PassivePlayManager => _passivePlayManager;
+    // --- AI Tactical Adaptation ---
+    private TeamAIManager _teamAIManager;
+    private float _lastTacticAIUpdateTime = -30f;
 
         // --- Simulation Control ---
         private bool _isInitialized = false;
@@ -107,6 +114,11 @@ namespace HandballManager.Simulation.Engines
             _playerSetupHandler = playerSetupHandler ?? throw new ArgumentNullException(nameof(playerSetupHandler)); // Keep reference if needed
             _matchFinalizer = matchFinalizer ?? throw new ArgumentNullException(nameof(matchFinalizer));
             _geometryProvider = geometryProvider ?? throw new ArgumentNullException(nameof(geometryProvider));
+
+            // --- Initialize AI Tactical Adaptation ---
+            // For now, assume Away team is AI (teamSimId = 1)
+            _teamAIManager = new TeamAIManager(_state, 1, _eventHandler);
+            _lastTacticAIUpdateTime = -30f;
 
             // Basic validation of the passed-in state
             if (_state.HomeTeamData == null || _state.AwayTeamData == null ||
@@ -224,6 +236,13 @@ namespace HandballManager.Simulation.Engines
                     }
 
                     // (Normal simulation logic would go here)
+
+                    // --- AI Tactical Adaptation (every 30s simulated) ---
+                    if (_state.MatchTimeSeconds - _lastTacticAIUpdateTime >= 30f)
+                    {
+                        _teamAIManager?.UpdateAI();
+                        _lastTacticAIUpdateTime = _state.MatchTimeSeconds;
+                    }
 
                     // --- Suivi du temps de jeu individuel ---
                     // On incrémente les minutes jouées pour chaque joueur sur le terrain toutes les secondes

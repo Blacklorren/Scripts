@@ -118,7 +118,7 @@ namespace HandballManager.Simulation.Engines
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // --- Create MatchState ---
-                var matchState = new MatchState(homeTeam, awayTeam, homeTactic, awayTactic, seed);
+                var matchState = new MatchState(homeTeam, awayTeam, homeTactic, awayTactic, seed, DateTime.Now.Date);
 
                 // --- Create MatchSimulator instance using the factory ---
                 var matchSimulator = _simulatorFactory.Create(

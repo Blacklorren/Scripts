@@ -18,6 +18,11 @@ namespace HandballManager.Simulation.Engines
     public class MatchState
     {
         /// <summary>
+        /// The date of the match (used for injury checks, etc.)
+        /// </summary>
+        public DateTime MatchDate { get; }
+
+        /// <summary>
         /// Provides AI evaluation of the current game state (risk, aggression, etc.).
         /// </summary>
         public IGameStateEvaluator GameStateEvaluator { get; set; }
@@ -143,8 +148,9 @@ namespace HandballManager.Simulation.Engines
         /// <param name="awayTactic">Away team tactic (required).</param>
         /// <param name="randomSeed">Seed for the simulation's random number generator.</param>
         /// <exception cref="ArgumentNullException">Thrown if required parameters (teams, tactics) are null.</exception>
-        public MatchState(TeamData homeTeam, TeamData awayTeam, Tactic homeTactic, Tactic awayTactic, int randomSeed)
+        public MatchState(TeamData homeTeam, TeamData awayTeam, Tactic homeTactic, Tactic awayTactic, int randomSeed, DateTime matchDate)
         {
+            MatchDate = matchDate;
             PlayerStats = new Dictionary<int, PlayerMatchStats>();
             // --- Constructor Validation ---
             HomeTeamData = homeTeam ?? throw new ArgumentNullException(nameof(homeTeam));

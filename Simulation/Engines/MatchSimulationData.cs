@@ -305,6 +305,18 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
                 IsRolling = true;
             }
         }
+
+        /// <summary>
+        /// Sets the ball as in flight (e.g., after a dribble impulse), updating position, velocity, and angular velocity.
+        /// </summary>
+        public void SetInFlight(Vector3 position, Vector3 velocity, Vector3 angularVelocity)
+        {
+            Position = position;
+            Velocity = velocity;
+            AngularVelocity = angularVelocity;
+            IsInFlight = true;
+            IsRolling = false;
+        }
     }
 
     // --- Player Simulation State ---
@@ -461,6 +473,11 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         public PlayerPosition AssignedTacticalRole { get; set; }
 
         // --- Dynamic State ---
+        /// <summary>
+        /// True if the AI intends for this player to dribble (intent, not current action).
+        /// Should be set by AI logic before action execution.
+        /// </summary>
+        public bool WantsToDribble { get; set; } = false;
         /// <summary>Current 2D position on the pitch.</summary>
         public Vector2 Position { get; internal set; } // Encapsulated
         /// <summary>Current 2D velocity.</summary>
@@ -474,13 +491,14 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         public float SuspensionTimer { get; set; } = 0f;
 
         /// <summary>
-        /// True if the player is currently stumbling due to a collision or other effect.
+        /// Number of yellow cards received by the player in the current match.
         /// </summary>
-        public bool IsStumbling { get; set; } = false;
+        public int YellowCardCount { get; set; } = 0;
+
         /// <summary>
-        /// Timer tracking the remaining duration of the stumbling effect (in seconds).
+        /// Number of two-minute suspensions received by the player in the current match.
         /// </summary>
-        public float StumbleTimer { get; set; } = 0f;
+        public int TwoMinuteSuspensionCount { get; set; } = 0;
 
         // --- Stumbling Mechanics ---
         private bool isStumbling = false;
@@ -564,6 +582,12 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
                  staminaFactor = Mathf.Lerp(SimConstants.PLAYER_STAMINA_MIN_SPEED_FACTOR, 1.0f, Stamina / SimConstants.PLAYER_STAMINA_LOW_THRESHOLD);
              }
              EffectiveSpeed = maxSpeedPossible * staminaFactor;
+
+             // Reduce speed if dribbling
+             if (CurrentAction == PlayerAction.Dribbling)
+             {
+                 EffectiveSpeed *= 0.75f; // Dribbling speed penalty (can be attribute-driven)
+             }
         }
 
         // --- Safe Accessors for BaseData Properties ---

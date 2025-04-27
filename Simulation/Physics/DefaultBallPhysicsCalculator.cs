@@ -49,13 +49,78 @@ namespace HandballManager.Simulation.Physics
             {
                 if (ball.Holder != null)
                 {
-                    Vector2 playerPos2D = ball.Holder.Position;
-                    Vector2 offsetDir2D = Vector2.right * (ball.Holder.TeamSimId == SimConstants.HOME_TEAM_ID ? 1f : -1f);
-                    if (ball.Holder.Velocity.sqrMagnitude > SimConstants.VELOCITY_NEAR_ZERO_SQ) { offsetDir2D = ball.Holder.Velocity.normalized; }
-                    Vector2 ballPos2D = playerPos2D + offsetDir2D * SimConstants.BALL_OFFSET_FROM_HOLDER;
-                    ball.Position = new Vector3(ballPos2D.x, SimConstants.BALL_DEFAULT_HEIGHT, ballPos2D.y);
-                    ball.Velocity = _zero;
-                    ball.AngularVelocity = _zero;
+                    // Check if the holder is actively dribbling
+                    if (ball.Holder.CurrentAction == PlayerAction.Dribbling)
+                    {
+                        // Reduce speed if dribbling (data-driven penalty)
+                        float dribblingAttr = ball.Holder.BaseData?.Dribbling ?? 50f;
+                        float agilityAttr = ball.Holder.BaseData?.Agility ?? 50f;
+                        // Penalty: best (90+) ~0.88, average (50) ~0.75, poor (30) ~0.68
+                        float penalty = Mathf.Lerp(0.68f, 0.88f, (0.7f * dribblingAttr + 0.3f * agilityAttr) / 100f);
+                        ball.Holder.EffectiveSpeed *= penalty;
+
+                        // Parameters for dribble physics
+                        float handHeight = SimConstants.BALL_DEFAULT_HEIGHT; // Height of hand/dribble contact
+                        float dribbleRadius = 0.6f; // Acceptable XZ distance to hand
+                        float maxDribbleDistance = 1.5f; // Lose control if ball is farther
+                        // Data-driven impulse and penalty
+                        float speedAttr = ball.Holder.BaseData?.Speed ?? 50f;
+                        float techniqueAttr = ball.Holder.BaseData?.Technique ?? 50f;
+
+                        // Impulse strength: Dribbling and Agility improve control (higher = harder/faster bounce)
+                        float minImpulse = 6.0f, maxImpulse = 11.0f;
+                        float impulse = Mathf.Lerp(minImpulse, maxImpulse, (0.7f * dribblingAttr + 0.3f * agilityAttr) / 100f);
+
+                        // Forward push: Speed and Technique improve forward control
+                        float minForward = 0.5f, maxForward = 1.5f;
+                        float forward = Mathf.Lerp(minForward, maxForward, (0.5f * speedAttr + 0.5f * techniqueAttr) / 100f);
+
+                        // Control loss chance: Lower Dribbling/Agility/Technique increases risk
+                        float controlLossChance = Mathf.Clamp01(0.15f - (dribblingAttr + agilityAttr + techniqueAttr) / 300f * 0.12f);
+                        // Example: world-class (90+ avg) = ~0.09, average (50) = ~0.12, poor (30) = ~0.14
+
+
+                        // Compute hand position
+                        Vector2 playerPos2D = ball.Holder.Position;
+                        Vector2 offsetDir2D = Vector2.right * (ball.Holder.TeamSimId == SimConstants.HOME_TEAM_ID ? 1f : -1f);
+                        if (ball.Holder.Velocity.sqrMagnitude > SimConstants.VELOCITY_NEAR_ZERO_SQ) { offsetDir2D = ball.Holder.Velocity.normalized; }
+                        Vector2 handPos2D = playerPos2D + offsetDir2D * SimConstants.BALL_OFFSET_FROM_HOLDER;
+                        Vector3 handPos = new Vector3(handPos2D.x, handHeight, handPos2D.y);
+
+                        float distXZ = new Vector2(ball.Position.x - handPos.x, ball.Position.z - handPos.z).magnitude;
+                        float distY = Mathf.Abs(ball.Position.y - handPos.y);
+
+                        // Lose control if ball is too far
+                        if (distXZ > maxDribbleDistance || distY > 2.0f)
+                        {
+                            ball.MakeLoose(ball.Position, ball.Velocity, ball.Holder.TeamSimId, ball.Holder);
+                            ball.SetHolder(null);
+                            return;
+                        }
+
+                        // If ball is "near hand" and moving upward or nearly stopped, apply impulse
+                        bool nearHand = (distXZ < dribbleRadius && Mathf.Abs(ball.Position.y - handHeight) < 0.3f);
+                        bool risingOrStopped = ball.Velocity.y >= -0.5f;
+                        if (nearHand && risingOrStopped)
+                        {
+                            // Apply downward and forward impulse
+                            Vector3 impulseVec = new Vector3(offsetDir2D.x * forward, -impulse, offsetDir2D.y * forward);
+                            ball.SetInFlight(handPos, impulseVec, Vector3.zero);
+                        }
+                        // Otherwise, let physics continue (ball in flight, bouncing, etc.)
+                        // Ball remains assigned to holder, but not attached
+                    }
+                    else
+                    {
+                        // Default: attach ball to hand
+                        Vector2 playerPos2D = ball.Holder.Position;
+                        Vector2 offsetDir2D = Vector2.right * (ball.Holder.TeamSimId == SimConstants.HOME_TEAM_ID ? 1f : -1f);
+                        if (ball.Holder.Velocity.sqrMagnitude > SimConstants.VELOCITY_NEAR_ZERO_SQ) { offsetDir2D = ball.Holder.Velocity.normalized; }
+                        Vector2 ballPos2D = playerPos2D + offsetDir2D * SimConstants.BALL_OFFSET_FROM_HOLDER;
+                        ball.Position = new Vector3(ballPos2D.x, SimConstants.BALL_DEFAULT_HEIGHT, ballPos2D.y);
+                        ball.Velocity = _zero;
+                        ball.AngularVelocity = _zero;
+                    }
                 }
                 else if (ball.IsInFlight)
                 {

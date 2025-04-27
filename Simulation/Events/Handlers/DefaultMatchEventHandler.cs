@@ -405,6 +405,33 @@ namespace HandballManager.Simulation.Events.Handlers
             // Use 2D position for foul location (fallbacks: impact, victim, committer)
             Vector2 foulLocation = result.ImpactPosition ?? victim?.Position ?? committer?.Position ?? Vector2.zero;
 
+            // --- Disciplinary sanction logic ---
+            if (committer != null)
+            {
+                switch (severity)
+                {
+                    case FoulSeverity.FreeThrow:
+                    case FoulSeverity.PenaltyThrow:
+                        // Only give yellow if not already suspended or sent off
+                        if (committer.YellowCardCount == 0 && committer.TwoMinuteSuspensionCount == 0)
+                        {
+                            committer.YellowCardCount++;
+                            LogEvent(state, $"Yellow card for {committer.BaseData?.FullName ?? "Unknown"}.", committer.GetTeamId(), committer.GetPlayerId());
+                        }
+                        break;
+                    case FoulSeverity.TwoMinuteSuspension:
+                        committer.TwoMinuteSuspensionCount++;
+                        committer.SuspensionTimer = DEFAULT_SUSPENSION_TIME;
+                        LogEvent(state, $"2-minute suspension for {committer.BaseData?.FullName ?? "Unknown"} (Suspensions: {committer.TwoMinuteSuspensionCount}).", committer.GetTeamId(), committer.GetPlayerId());
+                        break;
+                    case FoulSeverity.RedCard:
+                        committer.IsOnCourt = false;
+                        committer.SuspensionTimer = RED_CARD_SUSPENSION_TIME;
+                        LogEvent(state, $"Red card for {committer.BaseData?.FullName ?? "Unknown"} (sent off).", committer.GetTeamId(), committer.GetPlayerId());
+                        break;
+                }
+            }
+
             if (victim == null)
             {
                 Debug.LogError("[DefaultMatchEventHandler] HandleFoul called with null victim.");

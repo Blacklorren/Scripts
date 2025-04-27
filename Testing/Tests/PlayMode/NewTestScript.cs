@@ -285,6 +285,8 @@ public class MatchRealismTests : ZenjectIntegrationTestFixture
             // PlayerData constructor handles ID, personality, initial familiarity etc.
             PlayerData player = new PlayerData();
 
+            player.PlayerID = _nextTestPlayerId++;
+
             // Basic Info
             player.FirstName = "Test";
             player.LastName = $"{pos}{nameSuffix}";
