@@ -5,7 +5,19 @@ using UnityEngine;
 namespace HandballManager.Simulation.Utils 
 {
     public class PitchGeometryProvider : IGeometryProvider
+{
+    /// <summary>
+    /// Checks if a 2D position is near the sideline (touchline) of the pitch.
+    /// </summary>
+    /// <param name="position">The 2D position to check (x = field length, y = field width).</param>
+    /// <param name="tolerance">Allowed distance from the sideline in meters (default 0.5m).</param>
+    /// <returns>True if the position is near the sideline, false otherwise.</returns>
+    public bool IsNearSideline(Vector2 position, float tolerance = 0.3f)
     {
+        // The pitch goes from y=0 to y=PitchWidth
+        return position.y <= tolerance || position.y >= (PitchWidth - tolerance);
+    }
+
         // Implement all properties and methods from IGeometryProvider
         // by copying the static PitchGeometry class content here.
         // Replace hardcoded values with references if moved to a config class.
@@ -121,6 +133,50 @@ namespace HandballManager.Simulation.Utils
             float t2 = (-b + discriminant) / (2 * a);
             // Check if intersection occurs within the segment
             return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
+        }
+        /// <summary>
+        /// Checks if a 2D position is near the 6m line (within tolerance, default 0.4m).
+        /// </summary>
+        /// <param name="position">The 2D position to check (x = field length, y = field width).</param>
+        /// <param name="teamSimId">Team ID (0 = home, 1 = away).</param>
+        /// <param name="tolerance">Allowed distance from the 6m line in meters.</param>
+        /// <returns>True if the position is near the 6m line, false otherwise.</returns>
+        public bool IsNearSixMeterLine(Vector2 position, int teamSimId, float tolerance = 0.4f)
+        {
+            Vector2 goalCenter = GetGoalCenter(teamSimId);
+            float dist = Vector2.Distance(position, goalCenter);
+            return Mathf.Abs(dist - GoalAreaRadius) <= tolerance;
+        }
+        /// <summary>
+        /// Determines if a wing player has a sufficiently wide shooting angle near the goal, factoring in jumping skill.
+        /// </summary>
+        /// <param name="playerPos">The 2D position of the player (x = field length, y = field width).</param>
+        /// <param name="teamSimId">Team ID (0 = home, 1 = away).</param>
+        /// <param name="jumping">The player's jumping skill (0-100).</param>
+        /// <param name="minAngleDeg">The minimum effective angle (in degrees) considered comfortable for a shot. Default is 30.</param>
+        /// <returns>True if the effective angle is above the threshold, false otherwise.</returns>
+        public bool IsWideWingAngleNearGoal(Vector2 playerPos, int teamSimId, float jumping, float minAngleDeg = 30f)
+        {
+            // Get goalpost positions
+            Vector3 goalCenter3D = teamSimId == 0 ? HomeGoalCenter3D : AwayGoalCenter3D;
+            float goalX = goalCenter3D.x;
+            float goalYTop = goalCenter3D.z + (GoalWidth / 2f);
+            float goalYBot = goalCenter3D.z - (GoalWidth / 2f);
+            Vector2 postTop = new Vector2(goalX, goalYTop);
+            Vector2 postBot = new Vector2(goalX, goalYBot);
+
+            // Vectors from player to each post
+            Vector2 toTop = postTop - playerPos;
+            Vector2 toBot = postBot - playerPos;
+            // Angle between those vectors (in radians)
+            float angleRad = Vector2.Angle(toTop, toBot) * Mathf.Deg2Rad;
+            float angleDeg = Mathf.Abs(Vector2.Angle(toTop, toBot));
+
+            // Jumping bonus: up to +7° for 100 jumping
+            float jumpingBonus = Mathf.Lerp(0f, 7f, Mathf.Clamp01(jumping / 100f));
+            float effectiveAngle = angleDeg + jumpingBonus;
+
+            return effectiveAngle >= minAngleDeg;
         }
     }
 }

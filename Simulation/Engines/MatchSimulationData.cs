@@ -326,6 +326,20 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
     /// </summary>
     public class SimPlayer
     {
+        /// <summary>
+        /// Indicates whether the player has recently received a pass.
+        /// This is set to true when a pass is successfully received and should be reset appropriately by event logic.
+        /// </summary>
+        public bool ReceivedPassRecently { get; set; } = false;
+
+        /// <summary>
+        /// Number of yellow cards received by the player in the current match.
+        /// </summary>
+        public int YellowCardCount { get; set; } = 0;
+        /// <summary>
+        /// Number of 2-minute suspensions received by the player in the current match.
+        /// </summary>
+        public int TwoMinuteSuspensionCount { get; set; } = 0;
         // --- Jump Recovery State ---
         private bool isRecoveringFromJump = false;
         private float jumpRecoveryTimer = 0f;
@@ -490,15 +504,7 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         /// <summary>Seconds remaining if player is serving a suspension.</summary>
         public float SuspensionTimer { get; set; } = 0f;
 
-        /// <summary>
-        /// Number of yellow cards received by the player in the current match.
-        /// </summary>
-        public int YellowCardCount { get; set; } = 0;
 
-        /// <summary>
-        /// Number of two-minute suspensions received by the player in the current match.
-        /// </summary>
-        public int TwoMinuteSuspensionCount { get; set; } = 0;
 
         // --- Stumbling Mechanics ---
         private bool isStumbling = false;

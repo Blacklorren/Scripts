@@ -12,6 +12,7 @@ namespace HandballManager.Simulation.AI.Decision // This namespace is already co
         public SimPlayer Player { get; set; } // The potential receiver
         public float Score { get; set; }      // Overall desirability score (0-1, higher is better)
         public bool IsSafe { get; set; }      // Indicator if pass meets safety criteria
+        public bool IsComplex { get; set; }   // True if this pass is considered complex (e.g., lobbed, long, through defenders)
     }
 
     /// <summary>

@@ -3,6 +3,7 @@ using HandballManager.Simulation.Engines;
 using UnityEngine;
 using HandballManager.Simulation.AI.Evaluation; // Ajout pour accès aux évaluateurs
 using HandballManager.Gameplay; // Pour PlayerPosition, Tactic, etc.
+using HandballManager.Simulation.Utils;
 
 namespace HandballManager.Simulation.AI.Decision
 {
@@ -27,7 +28,7 @@ namespace HandballManager.Simulation.AI.Decision
         }
         public DecisionResult MakePassDecision(PlayerAIContext context)
         {
-            // Raffinement : prise en compte du poste, attributs, évaluateurs
+            // Handball-specific: Role-based pass logic refinement
             if (context == null || context.Player == null || context.MatchState == null)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
@@ -36,7 +37,7 @@ namespace HandballManager.Simulation.AI.Decision
             var tactic = context.Tactics;
             var teammates = state.GetTeamOnCourt(player.TeamSimId);
             var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
-
+            var pitchGeometry = new HandballManager.Simulation.Utils.PitchGeometryProvider();
             if (!player.HasBall)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
@@ -61,27 +62,58 @@ namespace HandballManager.Simulation.AI.Decision
                     if (opp == null || !opp.IsOnCourt || opp.CurrentAction == PlayerAction.Suspended) continue;
                     if (Vector2.Distance(mate.Position, opp.Position) < 2.0f) score -= 5.0f;
                 }
-                // Différenciation par poste :
-                if (role == PlayerPosition.LeftWing || role == PlayerPosition.RightWing)
+                // Handball-specific role-based logic
+                if (PlayerPositionHelper.IsWing(role))
                 {
-                    // Ailiers : passes rapides vers pivot ou arrière opposé
-                    if (mate.AssignedTacticalRole == PlayerPosition.Pivot) score += 2.0f;
-                    if (mate.AssignedTacticalRole == PlayerPosition.LeftBack || mate.AssignedTacticalRole == PlayerPosition.RightBack) score += 1.0f;
+                    // Wings: prefer passes back to backcourt or to Pivot, penalize risky cross passes
+                    if (PlayerPositionHelper.IsBack(mate.AssignedTacticalRole)) score += 2.0f;
+                    if (mate.AssignedTacticalRole == PlayerPosition.Pivot)
+                    {
+                        // Increase if Pivot is near 6m
+                        if (pitchGeometry.IsNearSixMeterLine(mate.Position, mate.TeamSimId)) score += 2.5f;
+                        else score += 1.0f;
+                    }
+                    // Penalize passes to opposite wing unless open
+                    if (PlayerPositionHelper.IsWing(mate.AssignedTacticalRole) && mate.AssignedTacticalRole != role)
+                    {
+                        bool open = true;
+                        foreach (var opp in opponents)
+                        {
+                            if (opp == null || !opp.IsOnCourt) continue;
+                            if (Vector2.Distance(mate.Position, opp.Position) < 2.5f) { open = false; break; }
+                        }
+                        if (!open) score -= 2.0f;
+                    }
+                }
+                else if (PlayerPositionHelper.IsBack(role))
+                {
+                    // Backs: prioritize passes to open wings or Pivot
+                    if (PlayerPositionHelper.IsWing(mate.AssignedTacticalRole))
+                    {
+                        bool open = true;
+                        foreach (var opp in opponents)
+                        {
+                            if (opp == null || !opp.IsOnCourt) continue;
+                            if (Vector2.Distance(mate.Position, opp.Position) < 2.5f) { open = false; break; }
+                        }
+                        if (open) score += 2.0f;
+                    }
+                    if (mate.AssignedTacticalRole == PlayerPosition.Pivot && pitchGeometry.IsNearSixMeterLine(mate.Position, mate.TeamSimId)) score += 2.5f;
+                    if (role == PlayerPosition.CentreBack) score += 1.0f; // Playmaker: higher base confidence
                 }
                 else if (role == PlayerPosition.Pivot)
                 {
-                    // Pivot : passes courtes, sécurité privilégiée
-                    score -= Vector2.Distance(player.Position, mate.Position) * 0.5f;
-                    if (mate.AssignedTacticalRole == PlayerPosition.CentreBack) score += 2.0f;
+                    // Pivot: favor short, safe passes, penalize long/risky
+                    float dist = Vector2.Distance(player.Position, mate.Position);
+                    score -= dist * 0.7f;
+                    if (PlayerPositionHelper.IsBack(mate.AssignedTacticalRole)) score += 1.0f;
+                    if (mate.AssignedTacticalRole == PlayerPosition.CentreBack) score += 1.5f;
+                    // Increase for passes received near 6m
+                    if (pitchGeometry.IsNearSixMeterLine(player.Position, player.TeamSimId)) score += 2.0f;
                 }
-                else if (role == PlayerPosition.CentreBack)
-                {
-                    // Demi-centre : favorise passes créatives et transversales
-                    score += 0.02f * creativity;
-                }
-                // Attribut Passing : plus élevé, plus de passes risquées
+                // Passing attribute: more risky passes if higher
                 score += 0.01f * passing;
-                // Évaluateurs contextuels
+                // Contextual evaluators
                 float tacticalRisk = _tacticalEvaluator?.GetRiskModifier(tactic) ?? 1f;
                 float personalityPass = _personalityEvaluator?.GetPassingTendencyModifier(player.BaseData) ?? 1f;
                 float gameStateRisk = _gameStateEvaluator?.GetAttackRiskModifier(state, player.TeamSimId) ?? 1f;
@@ -93,17 +125,27 @@ namespace HandballManager.Simulation.AI.Decision
                 }
             }
             float passConfidenceMod = Mathf.Lerp(0.85f, 1.15f, (decisionMaking + composure + passing) / 250f);
-            // Plus de confiance si le joueur est créatif et la situation l'encourage
+            // Playmaker (CentreBack) gets a base confidence boost
+            if (role == PlayerPosition.CentreBack) passConfidenceMod *= 1.08f;
             if (bestTarget != null)
             {
-                return new DecisionResult { IsSuccessful = true, Confidence = (0.8f + 0.1f * (bestScore / 10.0f)) * passConfidenceMod, Data = bestTarget };
+                // Determine if the pass is complex (e.g., distance > 9m)
+                float passDistance = Vector2.Distance(player.Position, bestTarget.Position);
+                bool isComplex = passDistance > 9.0f;
+                var passOption = new PassOption {
+                    Player = bestTarget,
+                    Score = bestScore,
+                    IsSafe = false, // Could be refined
+                    IsComplex = isComplex
+                };
+                return new DecisionResult { IsSuccessful = true, Confidence = (0.8f + 0.1f * (bestScore / 10.0f)) * passConfidenceMod, Data = passOption };
             }
-            return new DecisionResult { IsSuccessful = false, Confidence = 0.3f };
+            return new DecisionResult { IsSuccessful = false, Confidence = 0.3f * passConfidenceMod };
         }
 
         public DecisionResult MakeShootDecision(PlayerAIContext context)
         {
-            // Raffinement : différenciation poste, attributs, évaluateurs
+            // Handball-specific: Role-based shooting logic refinement
             if (context == null || context.Player == null || context.MatchState == null)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
@@ -111,13 +153,14 @@ namespace HandballManager.Simulation.AI.Decision
             var state = context.MatchState;
             var tactic = context.Tactics;
             var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
+            var pitchGeometry = new HandballManager.Simulation.Utils.PitchGeometryProvider();
             Vector2 goalPos = GetOpponentGoalPosition(player.TeamSimId);
             float distToGoal = Vector2.Distance(player.Position, goalPos);
 
             if (!player.HasBall)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
-            bool inGoalArea = new HandballManager.Simulation.Utils.PitchGeometryProvider().IsInGoalArea(new Vector3(player.Position.x, SimConstants.BALL_RADIUS, player.Position.y), player.TeamSimId == 0);
+            bool inGoalArea = pitchGeometry.IsInGoalArea(new Vector3(player.Position.x, SimConstants.BALL_RADIUS, player.Position.y), player.TeamSimId == 0);
             bool isOnGround = player.CurrentAction != PlayerAction.Jumping;
             bool allowShot = true;
             if (inGoalArea && isOnGround)
@@ -148,46 +191,78 @@ namespace HandballManager.Simulation.AI.Decision
                 if (Vector2.Distance(player.Position, opp.Position) < 2.5f) defendersNearby++;
             }
 
-            bool isBackcourt = role == PlayerPosition.LeftBack || role == PlayerPosition.CentreBack || role == PlayerPosition.RightBack;
-            bool isWing = role == PlayerPosition.LeftWing || role == PlayerPosition.RightWing;
+            bool isBackcourt = PlayerPositionHelper.IsBack(role);
+            bool isWing = PlayerPositionHelper.IsWing(role);
             bool isPivot = role == PlayerPosition.Pivot;
             bool hasStrongShot = shootingPower > 85 && technique > 75;
             bool isLongRange = distToGoal >= 9.0f && distToGoal <= 12.0f;
             bool isJumping = player.CurrentAction == PlayerAction.Jumping;
             float shotConfidenceMod = Mathf.Lerp(0.8f, 1.2f, (composure + bravery + aggression + decisionMaking + determination + shootingPower + finishing) / 700f);
 
-            // Différenciation par poste :
-            if (isBackcourt && hasStrongShot && isLongRange && isJumping && allowShot)
+            // Handball-specific role-based logic
+            if (isWing && allowShot)
             {
-                float confidence = (0.7f - 0.1f * defendersNearby) * shotConfidenceMod * combinedRisk;
-                return new DecisionResult { IsSuccessful = true, Confidence = confidence };
-            }
-            if (isWing && distToGoal < 7.5f && allowShot)
-            {
-                // Ailier : tirs angle fermé, favorise si peu de défenseurs proches
+                // Wings: check if at wide angle near goal area
+                float jumping = player.BaseData?.Jumping ?? 50f;
+        bool wideAngle = pitchGeometry.IsWideWingAngleNearGoal(player.Position, player.TeamSimId, jumping);
+                float baseConf = 0.55f;
+                if (wideAngle && distToGoal < 7.5f)
+                {
+                    baseConf = 0.85f;
+                }
+                else if (!wideAngle)
+                {
+                    baseConf = 0.4f; // Significantly decrease if not at wide angle
+                }
                 float angleBonus = (Mathf.Abs(player.Position.x - goalPos.x) > 10f) ? 0.1f : 0f;
-                float confidence = (0.75f + angleBonus - 0.1f * defendersNearby) * shotConfidenceMod * combinedRisk;
-                return new DecisionResult { IsSuccessful = true, Confidence = confidence };
+                float confidence = (baseConf + angleBonus - 0.12f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                return new DecisionResult { IsSuccessful = confidence > 0.6f, Confidence = confidence };
             }
-            if (isPivot && distToGoal < 6.5f && allowShot)
+            if (isBackcourt && allowShot)
             {
-                // Pivot : tirs à bout portant, favorise si peu de défenseurs
-                float confidence = (0.8f - 0.12f * defendersNearby) * shotConfidenceMod * combinedRisk;
-                return new DecisionResult { IsSuccessful = true, Confidence = confidence };
+                // Backs: prioritize shooting if >7m and moderately open
+                if (distToGoal > 7.0f && defendersNearby <= 2)
+                {
+                    float rangeBonus = (distToGoal > 9.0f && hasStrongShot) ? 0.1f : 0.0f;
+                    float baseConf = (role == PlayerPosition.CentreBack) ? 0.75f : 0.7f;
+                    float confidence = (baseConf + rangeBonus - 0.1f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                    return new DecisionResult { IsSuccessful = confidence > 0.65f, Confidence = confidence };
+                }
             }
+            if (isPivot && allowShot)
+            {
+                // Pivot: increase confidence only if very close to goal (<7m) and in 'receiving pass' context
+                bool near6m = distToGoal < 7.0f && pitchGeometry.IsNearSixMeterLine(player.Position, player.TeamSimId);
+                bool justReceived = context.Player != null && context.Player.ReceivedPassRecently;
+                if (near6m && justReceived)
+                {
+                    float confidence = (0.88f - 0.13f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                    return new DecisionResult { IsSuccessful = confidence > 0.7f, Confidence = confidence };
+                }
+                else
+                {
+                    // Discourage shooting otherwise
+                    float confidence = 0.3f * shotConfidenceMod * combinedRisk;
+                    // Encourage setting screens or finding space
+                    if (EvaluateScreenOpportunity(context).IsSuccessful)
+                        confidence += 0.1f;
+                    return new DecisionResult { IsSuccessful = false, Confidence = confidence };
+                }
+            }
+            // General fallback: close shot if open
             if (distToGoal < 8.0f && defendersNearby <= 1 && allowShot)
             {
                 float closeShotConfidenceMod = Mathf.Lerp(0.85f, 1.15f, (composure + bravery + determination + finishing) / 350f);
                 return new DecisionResult { IsSuccessful = true, Confidence = (0.9f - 0.1f * defendersNearby) * closeShotConfidenceMod * combinedRisk };
             }
-            // Sinon, pas de bonne opportunité
+            // Otherwise, not a good opportunity
             float fallbackShotConfidenceMod = Mathf.Lerp(0.85f, 1.1f, (composure + bravery + shootingPower) / 250f);
             return new DecisionResult { IsSuccessful = false, Confidence = 0.4f * fallbackShotConfidenceMod * combinedRisk };
         }
 
         public DecisionResult MakeDribbleDecision(PlayerAIContext context)
         {
-            // Raffinement : différenciation poste, attributs, évaluateurs
+            // Handball-specific: Role-based dribble logic refinement
             if (context == null || context.Player == null || context.MatchState == null)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
@@ -195,22 +270,21 @@ namespace HandballManager.Simulation.AI.Decision
             var state = context.MatchState;
             var tactic = context.Tactics;
             var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
-
+            var pitchGeometry = new HandballManager.Simulation.Utils.PitchGeometryProvider();
             if (!player.HasBall)
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
             Vector2 dribbleTarget = GetOpponentGoalPosition(player.TeamSimId);
             bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.PreparingShot;
             bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
-            var geometry = new Utils.PitchGeometryProvider();
-            bool isInGoalArea = geometry.IsInGoalArea(dribbleTarget, player.TeamSimId == 0);
+            bool isInGoalArea = pitchGeometry.IsInGoalArea(dribbleTarget, player.TeamSimId == 0);
             if (!willBeInAir && isInGoalArea)
             {
-                dribbleTarget = Utils.PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, dribbleTarget, player.TeamSimId, geometry);
+                dribbleTarget = HandballManager.Simulation.Utils.PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, dribbleTarget, player.TeamSimId, pitchGeometry);
             }
-            if (!willBeInAir && geometry.WouldCrossGoalArea(player.Position, dribbleTarget, player.TeamSimId))
+            if (!willBeInAir && pitchGeometry.WouldCrossGoalArea(player.Position, dribbleTarget, player.TeamSimId))
             {
-                dribbleTarget = Utils.PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, dribbleTarget, player.TeamSimId, geometry);
+                dribbleTarget = HandballManager.Simulation.Utils.PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, dribbleTarget, player.TeamSimId, pitchGeometry);
             }
 
             int nearbyOpponents = 0;
@@ -231,17 +305,62 @@ namespace HandballManager.Simulation.AI.Decision
             float combinedRisk = tacticalRisk * personalityDribble * gameStateRisk;
             float dribbleConfidenceMod = Mathf.Lerp(0.85f, 1.15f, (determination + composure + aggression + decisionMaking + dribbling) / 450f);
 
-            // Différenciation par poste :
-            if ((role == PlayerPosition.LeftWing || role == PlayerPosition.RightWing) && nearbyOpponents <= 1)
+            // Handball-specific role-based logic
+            if (PlayerPositionHelper.IsWing(role))
             {
-                // Ailier : dribble rapide sur l'aile si peu de pression
-                return new DecisionResult { IsSuccessful = true, Confidence = 0.8f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                // Wings: prefer dribbling along the sideline if space ahead
+                bool nearSideline = pitchGeometry.IsNearSideline(player.Position);
+                bool spaceAhead = true;
+                foreach (var opp in opponents)
+                {
+                    if (opp == null || !opp.IsOnCourt) continue;
+                    if ((opp.Position - player.Position).sqrMagnitude < 12.0f && Mathf.Abs(opp.Position.x - player.Position.x) < 5.0f)
+                    {
+                        spaceAhead = false;
+                        break;
+                    }
+                }
+                if (nearSideline && spaceAhead && nearbyOpponents <= 1)
+                {
+                    return new DecisionResult { IsSuccessful = true, Confidence = 0.85f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                }
+                // Otherwise, only dribble if little pressure
+                if (nearbyOpponents <= 1)
+                {
+                    return new DecisionResult { IsSuccessful = true, Confidence = 0.7f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                }
+                // Discourage dribbling under pressure
+                return new DecisionResult { IsSuccessful = false, Confidence = 0.2f * dribbleConfidenceMod * combinedRisk };
             }
-            if ((role == PlayerPosition.LeftBack || role == PlayerPosition.CentreBack || role == PlayerPosition.RightBack) && nearbyOpponents <= 2)
+            else if (PlayerPositionHelper.IsBack(role))
             {
-                // Arrière : dribble pénétration si espace
-                return new DecisionResult { IsSuccessful = true, Confidence = 0.7f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                // Backs: allow penetration dribbles if space, penalize if defenders are close
+                if (nearbyOpponents <= 2)
+                {
+                    return new DecisionResult { IsSuccessful = true, Confidence = 0.7f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                }
+                else
+                {
+                    return new DecisionResult { IsSuccessful = false, Confidence = 0.3f * dribbleConfidenceMod * combinedRisk };
+                }
             }
+            else if (role == PlayerPosition.Pivot)
+            {
+                // Pivot: drastically decrease dribble confidence in open play
+                bool near6m = pitchGeometry.IsNearSixMeterLine(player.Position, player.TeamSimId);
+                if (near6m && nearbyOpponents <= 1)
+                {
+                    // Only dribble if very close to goal and little pressure (rare)
+                    return new DecisionResult { IsSuccessful = true, Confidence = 0.4f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
+                }
+                // Prefer to set screens or reposition
+                if (EvaluateScreenOpportunity(context).IsSuccessful)
+                {
+                    return new DecisionResult { IsSuccessful = false, Confidence = 0.25f * dribbleConfidenceMod * combinedRisk };
+                }
+                return new DecisionResult { IsSuccessful = false, Confidence = 0.1f * dribbleConfidenceMod * combinedRisk };
+            }
+            // General fallback: attribute-based
             if (player.BaseData.GetShieldingEffectiveness() > 0.4f)
             {
                 return new DecisionResult { IsSuccessful = true, Confidence = 0.85f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };

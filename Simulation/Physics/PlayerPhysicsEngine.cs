@@ -153,7 +153,9 @@ namespace HandballManager.Simulation.Physics
             float maxDecel = PLAYER_DECELERATION_BASE * agilityFactor / strengthFactor; // Stronger = less deceleration
 
             // Speed directly affects effective speed
-            player.EffectiveSpeed = Mathf.Lerp(4.0f, 7.5f, (player.BaseData?.Speed ?? 50f) / 100f); // Modified by BaseData.Speed
+            // Stamina penalty: effective speed drops up to 30% at zero stamina
+            float baseSpeed = Mathf.Lerp(4.0f, 7.5f, (player.BaseData?.Speed ?? 50f) / 100f);
+            player.EffectiveSpeed = baseSpeed * Mathf.Lerp(0.7f, 1.0f, player.Stamina);
 
             // WorkRate increases willingness to sprint (lowers sprint threshold) and increases stamina drain
             float workRateFactor = Mathf.Lerp(1.0f, 1.2f, (player.BaseData?.WorkRate ?? 50f) / 100f); // Modified by BaseData.WorkRate
@@ -343,7 +345,7 @@ namespace HandballManager.Simulation.Physics
                     // --- Step Counting ---
                     if (player.HasBall && !pdata.IsDribbling)
                     {
-                        pdata.IncrementStep();
+                        pdata.TryIncrementStep(player.Position);
                         if (pdata.ExceededStepLimit())
                         {
                             _turnoverHandler?.Invoke(player, state, "Step Violation");
@@ -353,6 +355,12 @@ namespace HandballManager.Simulation.Physics
                     if (!player.HasBall)
                     {
                         pdata.LosePossession();
+                    }
+
+                    // If just gained possession, call StartPossession with position
+                    if (!pdata.HasBall && player.HasBall)
+                    {
+                        pdata.StartPossession(player.Position);
                     }
 
                     // --- Jumping Mechanics Update ---

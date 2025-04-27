@@ -47,7 +47,7 @@ namespace HandballManager.Simulation.AI.Decision
         /// </summary>
         public DefensiveAction DecideDefensiveAction(SimPlayer player, MatchState state, Tactic tactic)
         {
-            // Role-based and evaluator-driven logic
+            // --- System-aware defensive logic ---
             var role = player?.AssignedTacticalRole ?? default(PlayerPosition);
             float tacticAggression = _tacticalEvaluator?.GetRiskModifier(tactic) ?? 1.0f;
             float personalityAggression = _personalityEvaluator?.GetRiskModifier(player?.BaseData) ?? 1.0f;
@@ -69,6 +69,194 @@ namespace HandballManager.Simulation.AI.Decision
 
             SimPlayer ballHolder = ball?.Holder;
             bool opponentHasBall = ballHolder != null && ballHolder.TeamSimId != player.TeamSimId;
+
+            // --- Defensive system awareness ---
+            var formation = tactic?.DefensiveFormationData;
+            string system = (formation?.Name ?? "").Trim().ToUpperInvariant();
+            // DefensiveFormationData peut maintenant être utilisé pour une logique avancée basée sur la structure de la formation
+
+            // Helper function: find closest threat near a reference position
+            SimPlayer FindClosestThreat(Vector2 refPos, float maxDist = 100f, bool mustHaveBall = false)
+            {
+                SimPlayer threat = null;
+                float minDist = float.MaxValue;
+                foreach (var opp in opponents)
+                {
+                    if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
+                    if (mustHaveBall && (ballHolder == null || opp != ballHolder)) continue;
+                    // Threat: has ball OR is in scoring position (near 6m or open)
+                    bool isThreat = (opp == ballHolder) || (opp.Position.y < 7.0f && !opp.IsGoalkeeper());
+                    if (!isThreat) continue;
+                    float dist = Vector2.Distance(refPos, opp.Position);
+                    if (dist < minDist && dist < maxDist)
+                    {
+                        minDist = dist;
+                        threat = opp;
+                    }
+                }
+                return threat;
+            }
+
+            // Helper function: get all defenders on court for this team
+            var defenders = state.GetTeamOnCourt(player.TeamSimId);
+
+            // --- SYSTEM LOGIC ---
+            if (system == "6-0")
+            {
+                // All defenders hold the line near 6m, mark closest threat, conservative tackling
+                SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
+                if (threat != null)
+                {
+                    action.Action = PlayerAction.MarkingPlayer;
+                    action.TargetPlayer = threat;
+                    action.TargetPosition = threat.Position;
+                    // Only attempt tackle if opponent tries to break through line
+                    if (opponentHasBall && threat == ballHolder && Vector2.Distance(player.Position, ballHolder.Position) < 2.0f && ballHolder.Position.y < 7.0f)
+                    {
+                        // More conservative: only tackle if aggression is high
+                        float agg = player.BaseData?.Aggression ?? 50f;
+                        if (agg > 65f)
+                        {
+                            action.Action = PlayerAction.AttemptingTackle;
+                        }
+                    }
+                    return action;
+                }
+            }
+            else if (system == "5-1")
+            {
+                // Identify the 'point' defender (CentreBack or designated)
+                bool isPoint = role == PlayerPosition.CentreBack;
+                if (!isPoint && tactic?.DefensiveFormationData != null)
+                {
+                    // Try to match slot name for point (if formation data supports it)
+                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.PositionRole.ToString().ToLower().Contains("point"));
+                    if (slot != null && slot.PositionRole == player.AssignedTacticalRole) isPoint = true;
+                }
+                if (isPoint)
+                {
+                    // Point defender: position higher, aggressive on ball carrier, attempt interceptions
+                    if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 9.0f)
+                    {
+                        action.Action = PlayerAction.AttemptingTackle;
+                        action.TargetPlayer = ballHolder;
+                        action.TargetPosition = ballHolder.Position;
+                        return action;
+                    }
+                    // Otherwise, mark closest backcourt threat
+                    SimPlayer threat = FindClosestThreat(player.Position, 20.0f);
+                    if (threat != null)
+                    {
+                        action.Action = PlayerAction.MarkingPlayer;
+                        action.TargetPlayer = threat;
+                        action.TargetPosition = threat.Position;
+                        return action;
+                    }
+                }
+                else
+                {
+                    // Other 5 defenders: behave like 6-0 line
+                    SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
+                    if (threat != null)
+                    {
+                        action.Action = PlayerAction.MarkingPlayer;
+                        action.TargetPlayer = threat;
+                        action.TargetPosition = threat.Position;
+                        // Tackle only if opponent tries to break line
+                        if (opponentHasBall && threat == ballHolder && Vector2.Distance(player.Position, ballHolder.Position) < 2.0f && ballHolder.Position.y < 7.0f)
+                        {
+                            float agg = player.BaseData?.Aggression ?? 50f;
+                            if (agg > 65f)
+                            {
+                                action.Action = PlayerAction.AttemptingTackle;
+                            }
+                        }
+                        return action;
+                    }
+                }
+            }
+            else if (system == "3-2-1")
+            {
+                // Assign lines by role (or by slot if formation data is available)
+                // 1 high: CentreBack or designated; 2 mid: LeftBack/RightBack; 3 deep: Pivot/Wings
+                bool isHigh = role == PlayerPosition.CentreBack;
+                bool isMid = role == PlayerPosition.LeftBack || role == PlayerPosition.RightBack;
+                bool isDeep = role == PlayerPosition.Pivot || role == PlayerPosition.LeftWing || role == PlayerPosition.RightWing;
+                // If formation data available, prefer slot assignment
+                if (tactic?.DefensiveFormationData != null)
+                {
+                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.PositionRole == player.AssignedTacticalRole);
+                    if (slot != null)
+                    {
+                        var name = slot.PositionRole.ToString().ToLower();
+                        isHigh = name.Contains("high") || name.Contains("point");
+                        isMid = name.Contains("mid") || name.Contains("half");
+                        isDeep = name.Contains("deep") || name.Contains("wing") || name.Contains("pivot");
+                    }
+                }
+                if (isHigh)
+                {
+                    // High defender: aggressive, challenge ball carrier high, attempt interceptions
+                    if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 10.0f)
+                    {
+                        action.Action = PlayerAction.AttemptingTackle;
+                        action.TargetPlayer = ballHolder;
+                        action.TargetPosition = ballHolder.Position;
+                        return action;
+                    }
+                    // Otherwise, mark closest backcourt threat
+                    SimPlayer threat = FindClosestThreat(player.Position, 20.0f);
+                    if (threat != null)
+                    {
+                        action.Action = PlayerAction.MarkingPlayer;
+                        action.TargetPlayer = threat;
+                        action.TargetPosition = threat.Position;
+                        return action;
+                    }
+                }
+                else if (isMid)
+                {
+                    // Mid defenders: cover half-spaces, challenge backcourt players
+                    if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 9.0f && Vector2.Distance(player.Position, ballHolder.Position) < 3.5f)
+                    {
+                        action.Action = PlayerAction.AttemptingTackle;
+                        action.TargetPlayer = ballHolder;
+                        action.TargetPosition = ballHolder.Position;
+                        return action;
+                    }
+                    // Otherwise, mark closest backcourt threat
+                    SimPlayer threat = FindClosestThreat(player.Position, 12.0f);
+                    if (threat != null)
+                    {
+                        action.Action = PlayerAction.MarkingPlayer;
+                        action.TargetPlayer = threat;
+                        action.TargetPosition = threat.Position;
+                        return action;
+                    }
+                }
+                else if (isDeep)
+                {
+                    // Deep defenders: cover wings and pivot, less aggressive
+                    SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
+                    if (threat != null)
+                    {
+                        action.Action = PlayerAction.MarkingPlayer;
+                        action.TargetPlayer = threat;
+                        action.TargetPosition = threat.Position;
+                        // Tackle only if opponent tries to break line
+                        if (opponentHasBall && threat == ballHolder && Vector2.Distance(player.Position, ballHolder.Position) < 2.0f && ballHolder.Position.y < 7.0f)
+                        {
+                            float agg = player.BaseData?.Aggression ?? 50f;
+                            if (agg > 70f)
+                            {
+                                action.Action = PlayerAction.AttemptingTackle;
+                            }
+                        }
+                        return action;
+                    }
+                }
+            }
+            // --- fallback to existing role-based logic below if no system match ---
 
             // Role-specific defensive logic
             switch (role) {

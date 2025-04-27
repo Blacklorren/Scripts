@@ -133,8 +133,8 @@ namespace HandballManager.Data
             const float SHIELD_MAX_FACTOR = 0.60f;
             float strength = BaseData?.Strength ?? 50f;
             float agility = BaseData?.Agility ?? 50f;
-            // Weighted average: Strength (60%), Balance (40%)
-            float attributeScore = (strength * 0.6f + agility * 0.4f) / 100f;
+            // Weighted average: Strength (80%), Balance (20%)
+            float attributeScore = (strength * 0.8f + agility * 0.2f) / 100f;
             return Mathf.Lerp(SHIELD_MIN_FACTOR, SHIELD_MAX_FACTOR, attributeScore);
         }
 
@@ -578,40 +578,84 @@ namespace HandballManager.Data
         /// </summary>
         public bool HasDribbledSincePossession { get; set; } = false;
 
+        // --- 3-Step Rule Tracking ---
+        public UnityEngine.Vector2 LastStepPosition { get; set; } = UnityEngine.Vector2.zero;
+        public bool IsFirstStepAfterCatch { get; set; } = false;
+        public const float StepDistanceThreshold = 0.5f; // meters, adjust as needed
 
-        public void IncrementStep()
+        /// <summary>
+        /// Call this when the player gains possession of the ball.
+        /// </summary>
+        public void StartPossession(UnityEngine.Vector2 currentPosition)
+        {
+            ResetSteps();
+            LastStepPosition = currentPosition;
+            IsFirstStepAfterCatch = true;
+            // Reset dribble state ONLY on new possession for double dribble rule clarity.
+            HasDribbledSincePossession = false;
+            HasBall = true;
+        }
+
+        /// <summary>
+        /// Call this when the player loses possession of the ball.
+        /// </summary>
+        public void LosePossession()
+        {
+            ResetSteps();
+            // Reset dribble state ONLY on possession loss for double dribble rule clarity.
+            HasDribbledSincePossession = false;
+            HasBall = false;
+        }
+
+        /// <summary>
+        /// Call this when the player starts dribbling.
+        /// </summary>
+        public void StartDribble()
+        {
+            IsDribbling = true;
+            // Set HasDribbledSincePossession to true ONLY when starting a dribble. Never reset it here.
+            HasDribbledSincePossession = true;
+            ResetSteps(); // Reset step count on start of dribble
+        }
+
+        /// <summary>
+        /// Call this when the player ends dribbling.
+        /// </summary>
+        public void EndDribble()
+        {
+            IsDribbling = false;
+        }
+
+        /// <summary>
+        /// Checks and increments the step count if the player moves beyond the threshold.
+        /// Handles the 'zero step' after catch.
+        /// </summary>
+        /// <param name="currentPosition">The player's current position.</param>
+        public void TryIncrementStep(UnityEngine.Vector2 currentPosition)
         {
             if (HasBall && !IsDribbling)
             {
-                StepCount++;
+                float dist = UnityEngine.Vector2.Distance(currentPosition, LastStepPosition);
+                if (dist >= StepDistanceThreshold)
+                {
+                    if (IsFirstStepAfterCatch)
+                    {
+                        // Allow 'zero step' (landing after catch)
+                        IsFirstStepAfterCatch = false;
+                        LastStepPosition = currentPosition;
+                        return;
+                    }
+                    StepCount++;
+                    LastStepPosition = currentPosition;
+                }
             }
         }
 
         public void ResetSteps()
         {
             StepCount = 0;
-            HasDribbledSincePossession = false;
-        }
-
-        public void StartPossession()
-        {
-            ResetSteps();
-        }
-
-        public void LosePossession()
-        {
-            ResetSteps();
-        }
-
-        public void StartDribble()
-        {
-            IsDribbling = true;
-            HasDribbledSincePossession = true;
-        }
-
-        public void EndDribble()
-        {
-            IsDribbling = false;
+            // Do NOT reset HasDribbledSincePossession here. It must only be reset explicitly on possession loss or new possession.
+            IsFirstStepAfterCatch = false;
         }
 
         public bool IsDoubleDribbleViolation()

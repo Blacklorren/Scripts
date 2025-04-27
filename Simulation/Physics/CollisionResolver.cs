@@ -143,8 +143,8 @@ namespace HandballManager.Simulation.Physics
                         if (velAlongNormal > 0) // Only if moving towards each other
                         {
                             // In collision response
-                            float p1Mass = 1.0f + ((player1.BaseData?.Strength ?? 50f) / 200f);
-                            float p2Mass = 1.0f + ((player2.BaseData?.Strength ?? 50f) / 200f);
+                            float p1Mass = Mathf.Lerp(60f, 110f, (player1.BaseData?.Strength ?? 50f) / 100f);
+                            float p2Mass = Mathf.Lerp(60f, 110f, (player2.BaseData?.Strength ?? 50f) / 100f);
                             float impulse = velAlongNormal / (1 / p1Mass + 1 / p2Mass);
                             Vector2 impulseVector = separationDir * impulse;
                             // Reduce impulse for shielding

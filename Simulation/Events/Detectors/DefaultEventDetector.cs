@@ -144,43 +144,99 @@ namespace HandballManager.Simulation.Events.Detectors
                  float agilityFactor = Mathf.Lerp(0.8f, 1.2f, (gk.BaseData?.Agility ?? 50f) / 100f);
                  float reachDistance = gk.EffectiveSpeed * timeToImpact * agilityFactor;
 
-                 if (distanceToImpact < reachDistance + SimConstants.BALL_RADIUS + SAVE_REACH_BUFFER) {
+                 if (distanceToImpact < reachDistance + SimConstants.BALL_RADIUS + SAVE_REACH_BUFFER) 
+                 {
+                     // --- Enhanced, data-driven save probability calculation ---
                      float saveProb = ActionResolverConstants.BASE_SAVE_PROBABILITY;
 
-                     // Distance-based modifier: close shots are harder to save, long shots easier
                      float shotDistance = Vector3.Distance(predictedImpact3D, gkPos3D);
+                     Vector2 goalCenter2D = CoordinateUtils.To2DGround(_geometry.GetOpponentGoalCenter(state.Ball.LastShooter.TeamSimId));
+                     Vector2 impact2D = CoordinateUtils.To2DGround(predictedImpact3D);
+                     Vector2 shooter2D = state.Ball.LastShooter.Position;
+
+                     // Angle between shooter and goal center (for wide shots)
+                     float angleToGoal = Vector2.Angle(goalCenter2D - shooter2D, impact2D - shooter2D);
+
+                     // --- Distance-based modifier ---
                      float saveDistanceMod = 1f;
-                     if (shotDistance <= ActionResolverConstants.CLOSE_SHOT_DISTANCE) {
-                         saveDistanceMod = ActionResolverConstants.CLOSE_SHOT_SAVE_MOD;
-                     } else if (shotDistance >= ActionResolverConstants.LONG_SHOT_DISTANCE) {
-                         saveDistanceMod = ActionResolverConstants.LONG_SHOT_SAVE_MOD;
-                     } else {
-                         // Linear interpolation between close and long shot modifiers
-                         float t = (shotDistance - ActionResolverConstants.CLOSE_SHOT_DISTANCE) /
-                                   (ActionResolverConstants.LONG_SHOT_DISTANCE - ActionResolverConstants.CLOSE_SHOT_DISTANCE);
-                         saveDistanceMod = Mathf.Lerp(ActionResolverConstants.CLOSE_SHOT_SAVE_MOD, ActionResolverConstants.LONG_SHOT_SAVE_MOD, t);
+                     if (shotDistance <= 7f) // Close range: 6-7m
+                     {
+                         saveDistanceMod = 0.85f; // Harder to save
+                     }
+                     else if (shotDistance >= 13f) // Long shot
+                     {
+                         saveDistanceMod = 1.15f; // Easier to save
+                     }
+                     else
+                     {
+                         float t = (shotDistance - 7f) / (13f - 7f);
+                         saveDistanceMod = Mathf.Lerp(0.85f, 1.15f, t);
                      }
                      saveProb *= saveDistanceMod;
 
-                     saveProb *= Mathf.Lerp(
-    ActionResolverConstants.SAVE_REFLEX_MOD_MIN,
-    ActionResolverConstants.SAVE_REFLEX_MOD_MAX, 
-    (gk.BaseData?.Reflexes ?? 50f) / 80f
-                     );
-                     saveProb *= Mathf.Lerp(0.8f, 1.2f, (gk.BaseData?.Handling ?? 50f) / 100f);
-                     saveProb *= Mathf.Lerp(0.9f, 1.1f, (gk.BaseData?.PositioningGK ?? 50f) / 100f);
-                     if(state.Ball.LastShooter?.BaseData != null) {
-                          saveProb *= Mathf.Lerp(1.1f, 0.9f, state.Ball.LastShooter.BaseData.ShootingPower/100f);
-                          saveProb *= Mathf.Lerp(1.1f, 0.8f, state.Ball.LastShooter.BaseData.ShootingAccuracy/100f);
+                     // --- Attribute weighting based on context ---
+                     float reflex = gk.BaseData?.Reflexes ?? 50f;
+                     float oneOnOnes = gk.BaseData?.OneOnOnes ?? 50f;
+                     float handling = gk.BaseData?.Handling ?? 50f;
+                     float positioning = gk.BaseData?.PositioningGK ?? 50f;
+                     float penaltySaving = gk.BaseData?.PenaltySaving ?? 50f;
+
+                     // Penalty phase: use PenaltySaving
+                     if (state.CurrentPhase == GamePhase.HomePenalty || state.CurrentPhase == GamePhase.AwayPenalty)
+                     {
+                          // Non-linear: Use sigmoid for penalty saving
+                          float penaltySavingSigmoid = Sigmoid((penaltySaving - 50f) / 20f);
+                          saveProb *= Mathf.Lerp(0.8f, 1.2f, penaltySavingSigmoid);
                      }
+                     else if (shotDistance <= 7f) // Close range: Reflexes & OneOnOnes
+                     {
+                         float closeWeight = 0.6f * (reflex / 100f) + 0.4f * (oneOnOnes / 100f);
+                          // Non-linear: Use sigmoid for closeWeight
+                          float closeWeightSigmoid = Sigmoid((closeWeight - 0.5f) * 6f);
+                          saveProb *= Mathf.Lerp(0.7f, 1.3f, closeWeightSigmoid); // Stronger impact
+                     }
+                     else if (angleToGoal > 30f) // Wide angle: PositioningGK
+                     {
+                          // Non-linear: Use sigmoid for positioning
+                          float positioningSigmoid = Sigmoid((positioning - 50f) / 20f);
+                          saveProb *= Mathf.Lerp(0.8f, 1.2f, positioningSigmoid);
+                     }
+                     else // Default: Reflexes & Positioning
+                     {
+                         float baseWeight = 0.5f * (reflex / 100f) + 0.5f * (positioning / 100f);
+                          // Non-linear: Use sigmoid for baseWeight
+                          float baseWeightSigmoid = Sigmoid((baseWeight - 0.5f) * 6f);
+                          saveProb *= Mathf.Lerp(0.85f, 1.15f, baseWeightSigmoid);
+                     }
+
+                     // Powerful shots: Handling reduces penalty from power
+                     float shooterPower = state.Ball.LastShooter?.BaseData?.ShootingPower ?? 50f;
+                      // Non-linear: Use sigmoid for shooter power and handling
+                      float shooterPowerSigmoid = Sigmoid((shooterPower - 50f) / 20f);
+                      float powerPenalty = Mathf.Lerp(1.0f, 0.85f, shooterPowerSigmoid); // More power = lower save chance
+                      float handlingSigmoid = Sigmoid((handling - 50f) / 20f);
+                      float handlingMitigation = Mathf.Lerp(1.0f, 1.08f, handlingSigmoid); // Better handling = mitigates power
+                      saveProb *= powerPenalty * handlingMitigation;
+
+                     // Shooter accuracy: more accurate = harder to save
+                     float shooterAccuracy = state.Ball.LastShooter?.BaseData?.ShootingAccuracy ?? 50f;
+                      // Non-linear: Use sigmoid for shooter accuracy
+                      float shooterAccuracySigmoid = Sigmoid((shooterAccuracy - 50f) / 20f);
+                      saveProb *= Mathf.Lerp(1.05f, 0.85f, shooterAccuracySigmoid);
+
+                     // Clamp for safety
+                     saveProb = Mathf.Clamp(saveProb, 0.01f, 0.99f);
+
+                     // --- End enhanced calculation ---
+
 
                      if (state.RandomGenerator.NextDouble() < Mathf.Clamp01(saveProb)) {
                          ActionResult result = new ActionResult { Outcome = ActionResultOutcome.Saved, PrimaryPlayer = gk, SecondaryPlayer = state.Ball.LastShooter, ImpactPosition = CoordinateUtils.To2DGround(predictedImpact3D) };
                          eventHandler.HandleActionResult(result, state); // Use handler
                          return;
                      }
-                 }
-             } catch (Exception ex) { Debug.LogError($"Error checking save for GK {gk.GetPlayerId()}: {ex.Message}"); }
+                }
+            } catch (Exception ex) { Debug.LogError($"Error checking save for GK {gk.GetPlayerId()}: {ex.Message}"); }
         }
 
         private void CheckForLooseBallPickup(MatchState state, IMatchEventHandler eventHandler)
@@ -279,7 +335,7 @@ namespace HandballManager.Simulation.Events.Detectors
              return false;
          }
 
-         // --- Helper Methods ---
+          // --- Helper Methods ---
 
          private struct GoalLineCrossInfo { public bool DidCross; public float GoalLineX; }
 
@@ -312,5 +368,22 @@ namespace HandballManager.Simulation.Events.Detectors
                     ((crossingHomeLine && ball.LastShooter.TeamSimId == 1) ||
                      (!crossingHomeLine && ball.LastShooter.TeamSimId == 0));
          }
+
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
+        }
     }
 }

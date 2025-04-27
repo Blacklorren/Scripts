@@ -98,9 +98,9 @@ namespace HandballManager.Simulation.Events.Calculators
                     // Defender reads the pass and intercepts immediately
                     state.Ball.MakeLoose(passerPos3D, Vector3.zero, defender.TeamSimId, defender);
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                    #if UNITY_EDITOR || DEVELOPMENT_BUILD
                     Debug.Log($"[PrePassInterception] Defender {defender.BaseData?.FullName} intercepted pass from {passer.BaseData?.FullName} to {target.BaseData?.FullName}.");
-#endif
+                    #endif
                     // TODO: Visual feedback cue for interception (e.g., highlight defender, show animation)
 
                     return new ActionResult
@@ -235,20 +235,22 @@ namespace HandballManager.Simulation.Events.Calculators
             // Ensure division by 300 if weights sum to 1 and attributes are 0-100. Or normalize differently.
             // Assuming weights add up to 1 here for a 0-100 combined skill score.
             float passSkill = (passer.BaseData.Passing * ActionResolverConstants.PASS_SKILL_WEIGHT_PASSING +
-                               passer.BaseData.DecisionMaking * ActionResolverConstants.PASS_SKILL_WEIGHT_DECISION +
-                               passer.BaseData.Technique * ActionResolverConstants.PASS_SKILL_WEIGHT_TECHNIQUE);
+                       passer.BaseData.DecisionMaking * ActionResolverConstants.PASS_SKILL_WEIGHT_DECISION +
+                       passer.BaseData.Technique * ActionResolverConstants.PASS_SKILL_WEIGHT_TECHNIQUE);
 
-            // Apply skill modifier using Lerp between min/max modifiers defined in constants
-            // Ensure passSkill is clamped between 0 and 100 if necessary before dividing
+            // --- Skill Modifier: Non-linear S-curve (sigmoid) ---
             float clampedSkill = Mathf.Clamp(passSkill, 0f, 100f);
+            float skillFactor = Sigmoid((clampedSkill - 50f) / 20f); // S-curve, steepness tuned by divisor
             accuracyChance *= Mathf.Lerp(ActionResolverConstants.PASS_ACCURACY_SKILL_MIN_MOD,
                                          ActionResolverConstants.PASS_ACCURACY_SKILL_MAX_MOD,
-                                         clampedSkill / 100f);
+                                         skillFactor); // S-curve: improvements matter most at mid-range
 
-            // --- Vision : réduit la pénalité de distance sur passes difficiles ---
-            float visionMod = Mathf.Lerp(1.0f, 0.85f, passer.BaseData.Vision / 100f); // Vision élevée = -15% pénalité distance
+            // --- Distance Penalty: Non-linear power curve ---
+            float concentrationNoise = UnityEngine.Random.Range(0f, 0.02f) * (1.0f - (passer.BaseData.Concentration / 100f)); // Vision reduces penalty
             float dist = distance ?? Vector2.Distance(passer.Position, target.Position);
-            float distancePenalty = Mathf.Clamp(dist * ActionResolverConstants.PASS_DISTANCE_FACTOR * visionMod, 0f, ActionResolverConstants.PASS_DISTANCE_MAX_PENALTY_ABS);
+            float normalizedDist = Mathf.Clamp01(dist / 20f); // 0 at 0m, 1 at 20m (tune max distance as needed)
+            float distancePenaltyFactor = Mathf.Pow(normalizedDist, 1.5f); // Power > 1: gentle at short, sharper at long
+            float distancePenalty = distancePenaltyFactor * ActionResolverConstants.PASS_DISTANCE_MAX_PENALTY_ABS;
             accuracyChance -= distancePenalty;
 
             // --- Agility : réduit l'impact de la pression sur la précision de la passe ---
@@ -257,36 +259,30 @@ namespace HandballManager.Simulation.Events.Calculators
             // --- Teamwork : améliore la réussite si le receveur a aussi un bon Teamwork ---
             float teamworkMod = Mathf.Lerp(1.0f, 1.05f, Mathf.Min(passer.BaseData.Teamwork, target.BaseData.Teamwork) / 100f); // Bonus max +5%
 
-            // --- Positioning : réduit la pénalité si le receveur est bien placé ---
-            float positioningMod = Mathf.Lerp(1.0f, 0.95f, target.BaseData.Positioning / 100f); // Bonus max -5% pénalité pression
-
             // --- Leadership : réduit la pénalité de pression pour les passes clés ---
             float leadershipMod = Mathf.Lerp(1.0f, 0.97f, passer.BaseData.Leadership / 100f); // Bonus max -3%
 
             // --- WorkRate & Stamina : réduisent la pénalité de fatigue ---
-            float workRateMod = Mathf.Lerp(1.0f, 0.95f, passer.BaseData.WorkRate / 100f);
-            float staminaMod = Mathf.Lerp(1.0f, 0.9f, passer.BaseData.Stamina / 100f);
-
-            // --- Factor 3: Pressure ---
-            // Calculate pressure on the passer using a utility function
             float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(passer, state);
-            // Calculate base pressure penalty
-            float pressurePenalty = pressure * ActionResolverConstants.PASS_PRESSURE_FACTOR * agilityMod * positioningMod * leadershipMod;
-            // Reduce penalty based on passer's composure (higher composure = less affected by pressure)
-            float composureModifier = Mathf.Lerp(0f, ActionResolverConstants.PASS_COMPOSURE_MAX_EFFECT, passer.BaseData.Composure / 100f); // Use a constant for max effect
-            pressurePenalty *= (1.0f - composureModifier);
-            // Apply pressure penalty
+            float pressureEffectiveness = pressure * (1.0f - (passer.BaseData.Composure / 120f));
+            // --- Pressure Penalty: Non-linear (power) scaling ---
+            float basePressureEffect = Mathf.Pow(pressure, 1.2f) * ActionResolverConstants.PASS_PRESSURE_FACTOR;
+            float composureModifier = Mathf.Lerp(0f, ActionResolverConstants.PASS_COMPOSURE_MAX_EFFECT, passer.BaseData.Composure / 100f);
+            float pressurePenalty = basePressureEffect * (1.0f - composureModifier);
             accuracyChance -= pressurePenalty;
 
-            // --- Factor 4: Stamina (fatigue = 1 - Stamina) ---
-            if (ActionResolverConstants.PASS_FATIGUE_FACTOR > 0)
-            {
-                float fatiguePenalty = (1f - passer.Stamina) * ActionResolverConstants.PASS_FATIGUE_FACTOR * workRateMod * staminaMod;
+            // --- Fatigue Penalty: Non-linear thresholded scaling ---
+            float fatigueLevel = 1.0f - (passer.Stamina / 100f);
+            float effectiveFatigue = Mathf.Clamp01((fatigueLevel - 0.3f) / 0.7f); // Minimal effect until moderate fatigue
+            float workRateMod = Mathf.Lerp(1.0f, 0.92f, passer.BaseData.WorkRate / 100f); // Bonus max -8% pénalité fatigue
+            float staminaMod = Mathf.Lerp(1.0f, 0.95f, passer.Stamina / 100f); // Bonus max -5% pénalité fatigue
+            float nonLinearFatigue = PowerCurve(effectiveFatigue, 1.7f); // Power > 1: gentle at low, harsher at high
+            float fatiguePenalty = nonLinearFatigue * ActionResolverConstants.PASS_FATIGUE_FACTOR * workRateMod * staminaMod;
                 accuracyChance -= fatiguePenalty;
                 #if UNITY_EDITOR || DEVELOPMENT_BUILD
                 Debug.Log($"[Stamina] Player {passer.BaseData?.FullName} stamina: {passer.Stamina:F2}, penalty: {fatiguePenalty:F2}");
                 #endif
-            }
+            
 
             // --- Factor 5: Target Openness ---
             accuracyChance *= teamworkMod;
@@ -305,6 +301,23 @@ namespace HandballManager.Simulation.Events.Calculators
             // --- Final Step: Clamp Result ---
             // Ensure the final accuracy chance is within the valid probability range [0, 1]
             return Mathf.Clamp01(accuracyChance);
+        }
+
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
         }
     }
 }

@@ -90,6 +90,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
         public virtual void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
         {
+            // Reset ReceivedPassRecently for all players on possession change
+            if (state != null)
+            {
+                foreach (var player in state.AllPlayers.Values)
+                {
+                    if (player != null)
+                        player.ReceivedPassRecently = false;
+                }
+            }
             // Réinitialiser le jeu passif sur changement de possession
             _passivePlayManager?.ResetPassivePlay();
 
@@ -165,6 +174,15 @@ namespace HandballManager.Simulation.Events.Handlers
                 ResetPlayerActionState(primary, result.Outcome);
                 // Informer PassivePlayManager d'une passe
                 _passivePlayManager?.OnPassMade(state.PossessionTeamId);
+                // Set ReceivedPassRecently for secondary (recipient), reset for all others on the team
+                if (secondary != null)
+                {
+                    foreach (var player in state.GetTeamOnCourt(primary.TeamSimId))
+                    {
+                        if (player != null)
+                            player.ReceivedPassRecently = (player == secondary);
+                    }
+                }
             }
             break;
                 case "Tackle Won Ball": case "Tackle Successful (No Ball)": if (primary != null && secondary != null) { LogEvent(state, $"Tackle by {primary.BaseData?.FullName ?? "Unknown"} on {secondary.BaseData?.FullName ?? "Unknown"} successful!", primary.GetTeamId(), primary.GetPlayerId()); HandlePossessionChange(state, -1, true); ResetPlayerActionState(primary, result.Outcome); ResetPlayerActionState(secondary, result.Outcome); } break;
@@ -389,6 +407,11 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleFoul(ActionResult result, MatchState state)
         {
+            // Ensure defender 6m entry always results in PenaltyThrow
+            if (result.Reason == "Defender entered 6m zone" && result.FoulSeverity != FoulSeverity.PenaltyThrow)
+            {
+                result.FoulSeverity = FoulSeverity.PenaltyThrow;
+            }
             // --- Suivi des stats individuelles ---
             if (result.PrimaryPlayer != null)
             {
@@ -402,6 +425,19 @@ namespace HandballManager.Simulation.Events.Handlers
             SimPlayer committer = result.PrimaryPlayer;
             SimPlayer victim = result.SecondaryPlayer;
             FoulSeverity severity = result.FoulSeverity;
+
+            // --- Disciplinary escalation logic: 3x2min = red card ---
+            if (committer != null && severity == FoulSeverity.TwoMinuteSuspension)
+            {
+                committer.TwoMinuteSuspensionCount++;
+                if (committer.TwoMinuteSuspensionCount >= 3)
+                {
+                    severity = FoulSeverity.RedCard;
+                }
+            }
+
+            // Ensure severity is used for all subsequent logic
+            result.FoulSeverity = severity;
             // Use 2D position for foul location (fallbacks: impact, victim, committer)
             Vector2 foulLocation = result.ImpactPosition ?? victim?.Position ?? committer?.Position ?? Vector2.zero;
 
@@ -411,19 +447,21 @@ namespace HandballManager.Simulation.Events.Handlers
                 switch (severity)
                 {
                     case FoulSeverity.FreeThrow:
-                    case FoulSeverity.PenaltyThrow:
-                        // Only give yellow if not already suspended or sent off
-                        if (committer.YellowCardCount == 0 && committer.TwoMinuteSuspensionCount == 0)
-                        {
-                            committer.YellowCardCount++;
-                            LogEvent(state, $"Yellow card for {committer.BaseData?.FullName ?? "Unknown"}.", committer.GetTeamId(), committer.GetPlayerId());
-                        }
-                        break;
+            case FoulSeverity.PenaltyThrow:
+                // Only give yellow if not already suspended or sent off
+                if (committer.YellowCardCount == 0 && committer.TwoMinuteSuspensionCount == 0)
+                {
+                    committer.YellowCardCount++;
+                    LogEvent(state, $"Yellow card for {committer.BaseData?.FullName ?? "Unknown"}.", committer.GetTeamId(), committer.GetPlayerId());
+                    _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer after yellow card
+                }
+                break;
                     case FoulSeverity.TwoMinuteSuspension:
-                        committer.TwoMinuteSuspensionCount++;
-                        committer.SuspensionTimer = DEFAULT_SUSPENSION_TIME;
-                        LogEvent(state, $"2-minute suspension for {committer.BaseData?.FullName ?? "Unknown"} (Suspensions: {committer.TwoMinuteSuspensionCount}).", committer.GetTeamId(), committer.GetPlayerId());
-                        break;
+                committer.TwoMinuteSuspensionCount++;
+                committer.SuspensionTimer = DEFAULT_SUSPENSION_TIME;
+                LogEvent(state, $"2-minute suspension for {committer.BaseData?.FullName ?? "Unknown"} (Suspensions: {committer.TwoMinuteSuspensionCount}).", committer.GetTeamId(), committer.GetPlayerId());
+                _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer after 2-min suspension
+                break;
                     case FoulSeverity.RedCard:
                         committer.IsOnCourt = false;
                         committer.SuspensionTimer = RED_CARD_SUSPENSION_TIME;

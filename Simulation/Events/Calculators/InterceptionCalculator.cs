@@ -35,7 +35,9 @@ namespace HandballManager.Simulation.Events.Calculators
             float defenderSkill = (defender.BaseData.Anticipation * ActionResolverConstants.INTERCEPTION_SKILL_WEIGHT_ANTICIPATION +
                                    defender.BaseData.Agility * ActionResolverConstants.INTERCEPTION_SKILL_WEIGHT_AGILITY +
                                    defender.BaseData.Positioning * ActionResolverConstants.INTERCEPTION_SKILL_WEIGHT_POSITIONING);
-            float skillMod = Mathf.Lerp(ActionResolverConstants.INTERCEPTION_SKILL_MIN_MOD, ActionResolverConstants.INTERCEPTION_SKILL_MAX_MOD, defenderSkill / 100f);
+            // Non-linear: Use sigmoid for skill effect
+            float skillSigmoid = Sigmoid((defenderSkill - 50f) / 20f);
+            float skillMod = Mathf.Lerp(ActionResolverConstants.INTERCEPTION_SKILL_MIN_MOD, ActionResolverConstants.INTERCEPTION_SKILL_MAX_MOD, skillSigmoid);
 
             // --- Modificateurs secondaires (subtils) ---
             // WorkRate : bonus subtil pour les efforts répétés
@@ -51,12 +53,14 @@ namespace HandballManager.Simulation.Events.Calculators
 
             // Position
             float distToLine = SimulationUtils.CalculateDistanceToLine(defender.Position, CoordinateUtils.To2DGround(ball.PassOrigin), ball.IntendedTarget.Position); // Use helpers
+            // Non-linear: Use power curve for proximity to line
             float lineProximityFactor = Mathf.Clamp01(1.0f - (distToLine / ActionResolverConstants.INTERCEPTION_RADIUS));
-            lineProximityFactor *= lineProximityFactor;
+            lineProximityFactor = PowerCurve(lineProximityFactor, 1.5f);
 
             Vector2 ballPos2D = CoordinateUtils.To2DGround(ball.Position); // Use helper
             float distToBall = Vector2.Distance(defender.Position, ballPos2D);
-            float ballProximityFactor = Mathf.Clamp01(1.0f - (distToBall / (ActionResolverConstants.INTERCEPTION_RADIUS * ActionResolverConstants.INTERCEPTION_RADIUS_EXTENDED_FACTOR)));
+            // Non-linear: Use power curve for proximity to ball
+            float ballProximityFactor = PowerCurve(Mathf.Clamp01(1.0f - (distToBall / (ActionResolverConstants.INTERCEPTION_RADIUS * ActionResolverConstants.INTERCEPTION_RADIUS_EXTENDED_FACTOR))), 1.3f);
 
             // Pass Properties
             Vector2 passOrigin2D = CoordinateUtils.To2DGround(ball.PassOrigin);
@@ -79,12 +83,15 @@ namespace HandballManager.Simulation.Events.Calculators
                               * ballSpeedFactor
                               * workRateMod * staminaMod * determinationMod * resilienceMod * decisionMod;
 
-            // Documentation attributs secondaires :
-            // - WorkRate : bonus subtil sur interception répétée
-            // - Stamina : réduit pénalité fatigue
-            // - Determination : bonus subtil
-            // - Resilience : réduit impact fatigue
-            // - DecisionMaking : bonus subtil
+            // --- Mental Attribute Integration ---
+            // Composure: add bonus to interception (up to 3%)
+            finalChance *= 1.0f + (defender.BaseData.Composure / 300f);
+            // Concentration: add random penalty to interception, reduced by high concentration
+            float concentrationNoise = UnityEngine.Random.Range(0f, 0.01f) * (1.0f - (defender.BaseData.Concentration / 100f));
+            finalChance -= concentrationNoise;
+            // Decision Making: if very low, add slight penalty
+            if (defender.BaseData.DecisionMaking < 40)
+                finalChance *= 0.98f;
 
             // Movement Direction
             if (defender.Velocity.sqrMagnitude > 1f) {
@@ -95,7 +102,9 @@ namespace HandballManager.Simulation.Events.Calculators
 
             // Awareness factor
             float awareness = CalculatePlayerAwareness(defender, ball);
-            finalChance *= Mathf.Lerp(ActionResolverConstants.AWARENESS_MIN_FACTOR, ActionResolverConstants.AWARENESS_MAX_FACTOR, awareness);
+            // Non-linear: Use sigmoid for awareness
+            float awarenessSigmoid = Sigmoid((awareness - 0.5f) * 6f); // Centered at 0.5, steepness tuned
+            finalChance *= Mathf.Lerp(ActionResolverConstants.AWARENESS_MIN_FACTOR, ActionResolverConstants.AWARENESS_MAX_FACTOR, awarenessSigmoid);
 
             // --- Stamina Penalty (fatigue = 1 - Stamina) ---
             if (ActionResolverConstants.INTERCEPTION_FATIGUE_MAX_EFFECT > 0)
@@ -212,6 +221,22 @@ namespace HandballManager.Simulation.Events.Calculators
             Debug.Log($"[PrePassInterception] Defender: {defender.BaseData?.FullName}, Passer: {passer.BaseData?.FullName}, Target: {target.BaseData?.FullName}, Chance: {finalChance:F3}, SkillMod: {skillMod:F2}, Proximity: {lineProximityFactor:F2}, PasserDist: {passerProximityFactor:F2}, Awareness: {awarenessModifier:F2}");
 #endif
             return finalChance;
+        }
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
         }
     }
 }

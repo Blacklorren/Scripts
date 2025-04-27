@@ -111,7 +111,11 @@ namespace HandballManager.Simulation.Events.Calculators
                                  target.BaseData.Composure * ActionResolverConstants.TARGET_SKILL_WEIGHT_COMPOSURE);
 
             // --- Stamina & WorkRate du tackleur : réduisent la pénalité de fatigue sur la réussite du tacle ---
-            float staminaMod = Mathf.Lerp(0.95f, 1.0f, tackler.BaseData.Stamina / 100f); // max +5%
+            // Non-linear: stamina effect is gentle at high stamina, harsher at low
+            float staminaMod = Mathf.Lerp(0.7f, 1.0f, Mathf.Pow(tackler.Stamina, 1.5f));
+            // Direct strength factor: stronger tackler vs. weaker target increases chance
+            float strengthRatio = (tackler.BaseData.Strength + 1f) / (target.BaseData.Strength + 1f);
+            successChance *= Mathf.Lerp(0.85f, 1.15f, Mathf.Clamp01(strengthRatio / 2f));
             float workRateMod = Mathf.Lerp(0.97f, 1.0f, tackler.BaseData.WorkRate / 100f); // max +3%
             // --- Determination du tackleur : bonus subtil sur la réussite ---
             float determinationMod = Mathf.Lerp(0.97f, 1.0f, tackler.BaseData.Determination / 100f); // max +3%
@@ -122,29 +126,38 @@ namespace HandballManager.Simulation.Events.Calculators
             // --- Resilience du tackleur : réduit la pénalité de fatigue sur la réussite ---
             float resilienceMod = Mathf.Lerp(0.96f, 1.0f, tackler.BaseData.Resilience / 100f); // max +4%
 
+            // Non-linear: Use sigmoid for skill ratio to avoid extreme swings
             float ratio = tacklerSkill / Mathf.Max(ActionResolverConstants.MIN_TACKLE_TARGET_SKILL_DENOMINATOR, targetSkill);
-            successChance *= Mathf.Clamp(1.0f + (ratio - 1.0f) * ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING,
-                                         1.0f - ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_SUCCESS_SKILL_RANGE_MOD,
-                                         1.0f + ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_SUCCESS_SKILL_RANGE_MOD);
+            float skillSigmoid = Sigmoid((ratio - 1f) * 3f); // Centered at 1, steepness tuned
+            successChance *= Mathf.Lerp(1.0f - ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_SUCCESS_SKILL_RANGE_MOD,
+                                       1.0f + ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_SUCCESS_SKILL_RANGE_MOD,
+                                       skillSigmoid);
 
+            // Non-linear: Use sigmoid for foul skill ratio
             float foulSkillRatio = targetSkill / Mathf.Max(ActionResolverConstants.MIN_TACKLE_TARGET_SKILL_DENOMINATOR, tacklerSkill);
-            foulChance *= Mathf.Clamp(1.0f + (foulSkillRatio - 1.0f) * ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD,
-                                      1.0f - ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD * 0.5f,
-                                      1.0f + ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD);
+            float foulSkillSigmoid = Sigmoid((foulSkillRatio - 1f) * 3f);
+            foulChance *= Mathf.Lerp(1.0f - ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD * 0.5f,
+                                    1.0f + ActionResolverConstants.TACKLE_ATTRIBUTE_SCALING * ActionResolverConstants.TACKLE_FOUL_SKILL_RANGE_MOD,
+                                    foulSkillSigmoid);
 
             // Application des modificateurs subtils
             successChance *= staminaMod * workRateMod * determinationMod * positioningMod * resilienceMod;
             foulChance *= decisionMod * (2f - positioningMod); // positioningMod < 1 donc réduit la faute
 
-            // Documentation attributs secondaires :
-            // - Stamina/WorkRate : réduisent la pénalité de fatigue
-            // - Determination : bonus subtil réussite
-            // - Positioning : réduit faute et augmente réussite
-            // - DecisionMaking : réduit faute
-            // - Resilience : réduit impact fatigue
+            // --- Mental Attribute Integration ---
+            // Composure: add bonus to success (up to 2%)
+            successChance *= 1.0f + (tackler.BaseData.Composure / 350f);
+            // Concentration: add random penalty to success, reduced by high concentration
+            float concentrationNoise = UnityEngine.Random.Range(0f, 0.01f) * (1.0f - (tackler.BaseData.Concentration / 100f));
+            successChance -= concentrationNoise;
+            // Decision Making: if very low, add slight penalty to success
+            if (tackler.BaseData.DecisionMaking < 40)
+                successChance *= 0.98f;
 
             // Situationals
-            foulChance *= Mathf.Lerp(ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MIN, ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MAX, tackler.BaseData.Aggression / 100f);
+            // Non-linear: Use power curve for aggression's effect on foul chance
+            float aggressionNonLinear = Mathf.Pow(tackler.BaseData.Aggression / 100f, 1.3f);
+            foulChance *= Mathf.Lerp(ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MIN, ActionResolverConstants.TACKLE_AGGRESSION_FOUL_FACTOR_MAX, aggressionNonLinear);
             if (ActionCalculatorUtils.IsTackleFromBehind(tackler, target)) foulChance *= ActionResolverConstants.TACKLE_FROM_BEHIND_FOUL_MOD; // Use Util
             float closingSpeed = ActionCalculatorUtils.CalculateClosingSpeed(tackler, target); // Use Util
             float highSpeedThreshold = ActionResolverConstants.MAX_PLAYER_SPEED * ActionResolverConstants.TACKLE_HIGH_SPEED_THRESHOLD_FACTOR;
@@ -157,6 +170,22 @@ namespace HandballManager.Simulation.Events.Calculators
             foulChance = Mathf.Clamp01(foulChance);
 
             return (successChance, foulChance);
+        }
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
         }
     }
 }

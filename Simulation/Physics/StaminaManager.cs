@@ -60,14 +60,18 @@ namespace HandballManager.Simulation.Physics
                 staminaDrain = STAMINA_DRAIN_BASE * deltaTime;
                 if (isSprinting) staminaDrain *= STAMINA_SPRINT_MULTIPLIER;
 
-                float staminaAttributeMod = 1f - (STAMINA_ATTRIBUTE_DRAIN_MOD * (player.BaseData.Stamina / 100f));
+                // Non-linear: Use power curve for stamina's effect on drain (high stamina = much less drain)
+                float staminaCurve = PowerCurve(player.BaseData.Stamina / 100f, 1.5f);
+                float staminaAttributeMod = 1f - (STAMINA_ATTRIBUTE_DRAIN_MOD * staminaCurve);
                 staminaDrain *= staminaAttributeMod;
             }
 
             float staminaRecovery = 0f;
             if (!isMovingSignificantly)
             {
-                float naturalFitnessMod = 1f + (NATURAL_FITNESS_RECOVERY_MOD * ((player.BaseData.NaturalFitness - 50f) / 50f));
+                // Non-linear: Use sigmoid for natural fitness's effect on recovery (mid-range fitness most impactful)
+                float naturalFitnessCurve = Sigmoid((player.BaseData.NaturalFitness - 50f) / 20f);
+                float naturalFitnessMod = 0.8f + 0.4f * naturalFitnessCurve; // Range 0.8 to 1.2
                 staminaRecovery = STAMINA_RECOVERY_RATE * naturalFitnessMod * deltaTime;
             }
 
@@ -75,6 +79,22 @@ namespace HandballManager.Simulation.Physics
             player.UpdateEffectiveSpeed(); // Always update, let the method handle thresholds
             
             // Remove the conditional speed reset here
+        }
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
         }
     }
 }

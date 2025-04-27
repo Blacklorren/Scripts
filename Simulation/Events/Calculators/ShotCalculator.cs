@@ -34,10 +34,12 @@ namespace HandballManager.Simulation.Events.Calculators
             {
                 // Calculate vertical velocity based on Jumping attribute
                 float jumpingValue = Mathf.Clamp(shooter.BaseData.Jumping, 0f, 100f);
+                // Non-linear: Use sigmoid for jumping effect (mid-range jumpers benefit most)
+                float jumpingFactor = Sigmoid((jumpingValue - 50f) / 20f);
                 float verticalVelocity = Mathf.Lerp(
                     SimConstants.MIN_JUMP_VERTICAL_VELOCITY,
                     SimConstants.MAX_JUMP_VERTICAL_VELOCITY,
-                    jumpingValue / 100f
+                    jumpingFactor
                 );
                 // Use the shot direction's X/Z for horizontal, verticalVelocity for Y
                 Vector2 jumpVelocity = new Vector2(0f, verticalVelocity); // If you want to add horizontal, use actualDirection3D.x/z
@@ -52,12 +54,19 @@ namespace HandballManager.Simulation.Events.Calculators
                 : new Vector2(0f, ActionResolverConstants.PITCH_CENTER_Y);
 
             // --- Attributs utilisés dans le calcul du tir ---
-            float accuracyFactor = Mathf.Clamp(shooter.BaseData.ShootingAccuracy, 1f, 100f) / ActionResolverConstants.SHOT_ACCURACY_BASE; // Précision de tir
+            // Non-linear: Use sigmoid for shooting accuracy (S-curve)
+            float accuracyRaw = Mathf.Clamp(shooter.BaseData.ShootingAccuracy, 1f, 100f);
+            float accuracyFactor = Sigmoid((accuracyRaw - 50f) / 20f); // S-curve, steepness tuned by divisor
             float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(shooter, state); // Pression défensive
-            float composureEffect = Mathf.Lerp(1.0f, 1.0f - ActionResolverConstants.SHOT_COMPOSURE_FACTOR, shooter.BaseData.Composure / 100f); // Calme sous pression
+            // --- Mental Attribute Integration ---
+            // Composure: reduce pressure effect more strongly if high (tuned scaling)
+            // Non-linear: Use power curve for pressure effect
+            float pressureNonLinear = Mathf.Pow(pressure, 1.3f); // Amplifies moderate/high pressure
+            float pressureEffectiveness = pressureNonLinear * (1.0f - (shooter.BaseData.Composure / 120f));
 
             // Stamina (fatigue = 1 - Stamina) : impacte négativement la précision et la puissance
-            float staminaEffect = Mathf.Lerp(0.85f, 1.0f, shooter.BaseData.Stamina / 100f); // Stamina faible = -15% perf
+            // Non-linear: stamina effect is gentle at high stamina, harsher at low
+            float staminaEffect = Mathf.Lerp(0.7f, 1.0f, Mathf.Pow(shooter.Stamina, 1.5f));
             // Détermination et WorkRate réduisent l'effet de la fatigue
             float determinationMod = Mathf.Lerp(0.95f, 1.0f, shooter.BaseData.Determination / 100f);
             float workRateMod = Mathf.Lerp(0.95f, 1.0f, shooter.BaseData.WorkRate / 100f);
@@ -71,8 +80,14 @@ namespace HandballManager.Simulation.Events.Calculators
             float positioningMod = Mathf.Lerp(1.0f, 0.95f, shooter.BaseData.Positioning / 100f);
 
             float maxAngleDeviation = ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * (1.0f - accuracyFactor);
-            maxAngleDeviation *= (1.0f + pressure * ActionResolverConstants.SHOT_PRESSURE_INACCURACY_MOD * composureEffect * strengthEffect);
+            maxAngleDeviation *= (1.0f + pressureEffectiveness * ActionResolverConstants.SHOT_PRESSURE_INACCURACY_MOD * strengthEffect);
             maxAngleDeviation *= agilityEffect * positioningMod; // Ajout effet agilité et placement
+            // Concentration: add random noise, reduced by high concentration (tuned scaling)
+            float concentrationNoise = UnityEngine.Random.Range(0f, 2f) * (1.0f - (shooter.BaseData.Concentration / 100f));
+            maxAngleDeviation += concentrationNoise;
+            // Decision Making: if very low, add slight penalty
+            if (shooter.BaseData.DecisionMaking < 40)
+                maxAngleDeviation *= 1.05f;
             maxAngleDeviation = Mathf.Clamp(maxAngleDeviation, 0f, ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * ActionResolverConstants.SHOT_MAX_DEVIATION_CLAMP_FACTOR);
 
             float horizontalAngleOffset = (float)state.RandomGenerator.NextDouble() * 2 * maxAngleDeviation - maxAngleDeviation;
@@ -205,13 +220,32 @@ namespace HandballManager.Simulation.Events.Calculators
              float techniqueInfluence = shooter.BaseData.Technique / 100f;
              float powerInfluence = shooter.BaseData.ShootingPower / 100f;
 
-             float spinMagnitude = ActionResolverConstants.SHOT_MAX_SPIN_MAGNITUDE *
-                                  Mathf.Lerp(0.3f, 1.0f, techniqueInfluence) *
-                                  Mathf.Lerp(0.7f, 1.1f, powerInfluence) *
-                                  ActionResolverConstants.SHOT_TYPE_SPIN_FACTOR;
+             // Non-linear: Use power curve for technique and sigmoid for power
+            float techniqueNonLinear = Mathf.Pow(techniqueInfluence, 1.2f);
+            float powerNonLinear = Sigmoid((shooter.BaseData.ShootingPower - 50f) / 20f);
+            float spinMagnitude = ActionResolverConstants.SHOT_MAX_SPIN_MAGNITUDE *
+                                 Mathf.Lerp(0.3f, 1.0f, techniqueNonLinear) *
+                                 Mathf.Lerp(0.7f, 1.1f, powerNonLinear) *
+                                 ActionResolverConstants.SHOT_TYPE_SPIN_FACTOR;
 
              spinMagnitude *= (float)state.RandomGenerator.NextDouble() * (MAX_SPIN_VARIANCE - MIN_SPIN_VARIANCE) + MIN_SPIN_VARIANCE;
              return spinMagnitude;
+        }
+        // --- Non-linear Utility Functions ---
+        /// <summary>
+        /// Sigmoid function: returns value between 0 and 1. Use for S-curve scaling.
+        /// </summary>
+        private static float Sigmoid(float x)
+        {
+            return 1f / (1f + Mathf.Exp(-x));
+        }
+
+        /// <summary>
+        /// Power curve: raises input (0..1) to the given power. Use for gentle/harsh curve.
+        /// </summary>
+        private static float PowerCurve(float t, float power)
+        {
+            return Mathf.Pow(Mathf.Clamp01(t), power);
         }
     }
 }

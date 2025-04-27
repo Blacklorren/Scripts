@@ -663,7 +663,21 @@ namespace HandballManager.Simulation.AI
             float shootScore = _shootDecisionMaker.EvaluateShootScore(player, state, tactic);
             PassOption bestPass = _passDecisionMaker.GetBestPassOption(player, state, tactic);
             float passScore = bestPass?.Score ?? 0f;
+            // Apply complex pass modifier if pass is complex
+            if (bestPass != null && bestPass.IsComplex)
+                passScore *= phaseComplexPassModifier;
             float dribbleScore = _dribbleDecisionMaker.EvaluateDribbleScore(player, state, tactic);
+
+            // --- Passive Play Warning: Urgency Modifiers ---
+            var passiveManager = GetPassivePlayManagerFromSimulator(_matchSimulator);
+            if (passiveManager != null && passiveManager.PassivePlayWarningActive && player.TeamSimId == passiveManager.WarningTeamSimId)
+            {
+                // Increase urgency for shooting and riskier passes, decrease for holding
+                shootScore *= 1.7f;
+                passScore *= 1.5f;
+                actionThresholdFactor *= 0.7f; // Lower threshold, more likely to act
+                // Optionally, further deprioritize dribble/hold by not boosting dribbleScore
+            }
 
             // --- Phase Detection ---
             // Note: GamePhase is defined in Core.Enums.cs, state.CurrentPhase is available
@@ -689,21 +703,26 @@ namespace HandballManager.Simulation.AI
             }
             // (Other phases: keep modifiers at 1.0)
 
-            // --- Apply Context Modifiers ---
-            float tacticalRiskMod = _tacticalEvaluator.GetRiskModifier(tactic);
-            float personalityRiskMod = _personalityEvaluator.GetRiskModifier(player.BaseData);
-            float gameStateRiskMod = _gameStateEvaluator.GetAttackRiskModifier(state, player.TeamSimId);
+            // --- Apply Strong Evaluator Modifiers (amplified influence) ---
+            // These modifiers now have a wide range (e.g. 0.5x–2.0x+) to make AI behavior more adaptive
+            float tacticalRiskMod = Mathf.Clamp(_tacticalEvaluator.GetRiskModifier(tactic), 0.5f, 2.0f);
+            float personalityRiskMod = Mathf.Clamp(_personalityEvaluator.GetRiskModifier(player.BaseData), 0.5f, 2.0f);
+            float gameStateRiskMod = Mathf.Clamp(_gameStateEvaluator.GetAttackRiskModifier(state, player.TeamSimId), 0.5f, 2.0f);
             float combinedRiskFactor = tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
 
-            // Adjust scores based on risk
-            shootScore *= combinedRiskFactor;
-            dribbleScore *= combinedRiskFactor * DRIBBLING_RISK_ADJUSTMENT;
-            passScore /= Mathf.Max(PASS_SAFETY_MIN_DIVISOR, combinedRiskFactor * PASS_SAFETY_ADJUSTMENT); // Divide for safety bias
+            // --- Apply as strong multipliers/dividers ---
+            // For shots and dribbles, higher risk increases likelihood; for passes, higher risk reduces safe pass preference
+            shootScore *= tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
+            dribbleScore *= tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
+            passScore /= Mathf.Max(0.1f, tacticalRiskMod * personalityRiskMod * gameStateRiskMod);
 
-            // Apply personality tendency modifiers
-            shootScore *= _personalityEvaluator.GetShootingTendencyModifier(player.BaseData);
-            passScore *= _personalityEvaluator.GetPassingTendencyModifier(player.BaseData);
-            dribbleScore *= _personalityEvaluator.GetDribblingTendencyModifier(player.BaseData);
+            // Apply personality tendency modifiers (still multiplicative, but after risk)
+            shootScore *= Mathf.Clamp(_personalityEvaluator.GetShootingTendencyModifier(player.BaseData), 0.5f, 2.0f);
+            passScore  *= Mathf.Clamp(_personalityEvaluator.GetPassingTendencyModifier(player.BaseData), 0.5f, 2.0f);
+            dribbleScore *= Mathf.Clamp(_personalityEvaluator.GetDribblingTendencyModifier(player.BaseData), 0.5f, 2.0f);
+
+            // NOTE: Removed DRIBBLING_RISK_ADJUSTMENT and PASS_SAFETY_ADJUSTMENT to let evaluators dominate
+            // This ensures evaluator output meaningfully shifts action selection under different tactical/game/personality contexts.
 
             // --- Apply Phase-specific Modifiers (after risk/personality) ---
             dribbleScore *= phaseDribbleModifier;
