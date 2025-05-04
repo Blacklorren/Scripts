@@ -12,14 +12,7 @@ using HandballManager.Simulation.Events;
 using HandballManager.Simulation.Installers;
 using Zenject;
 using HandballManager.Core;  // For GameState enum
-
-
-// Ensure required namespaces exist, even if classes are basic placeholders
-namespace HandballManager.Management { public class FinanceManager { public void ProcessWeeklyPayments(List<TeamData> allTeams) { _ = allTeams; /* TODO */ } public void ProcessMonthly(List<TeamData> allTeams) { _ = allTeams; /* TODO */ } } }
-
-// Ensure required data structures exist
-// Note: LeagueStandingEntry is now defined in HandballManager.Management namespace
-
+using HandballManager.UI;    // For IUIManager
 
 namespace HandballManager.Core.GameManager
 {
@@ -39,47 +32,42 @@ namespace HandballManager.Core.GameManager
             {
                 if (instance == null)
                 {
-                    instance = FindFirstObjectByType<GameManager>();
-                     if (instance == null)
-                     {
-                         GameObject singletonObject = new GameObject("GameManager");
-                         instance = singletonObject.AddComponent<GameManager>();
-                         Debug.Log("GameManager instance was null. Created a new GameManager object.");
-                     }
+                    instance = FindObjectOfType<GameManager>();
+                    if (instance == null)
+                    {
+                        GameObject go = new GameObject("GameManager");
+                        instance = go.AddComponent<GameManager>();
+                    }
                 }
                 return instance;
             }
         }
 
-        // --- Public Properties ---
-        public GameState CurrentState { get; private set; } = GameState.MainMenu;
-        
-        // --- Service Container ---
-        private IServiceContainer serviceContainer;
-        
-        // --- Core System References ---
-        // These properties provide backward compatibility during refactoring
-        public TimeManager TimeManager => serviceContainer.Get<TimeManager>();
-        public UIManager UIManagerRef { get; private set; } // Keep direct reference for UI updates
-        
-        // These properties will be removed after full migration to DI
-        private MatchEngine MatchEngine => serviceContainer.Get<IMatchEngine>() as MatchEngine;
-        private TrainingSimulator TrainingSimulator => serviceContainer.Get<TrainingSimulator>();
-        private MoraleSimulator MoraleSimulator => serviceContainer.Get<MoraleSimulator>();
-        private PlayerDevelopment PlayerDevelopment => serviceContainer.Get<PlayerDevelopment>();
-        private TransferManager TransferManager => serviceContainer.Get<TransferManager>();
-        private ContractManager ContractManager => serviceContainer.Get<ContractManager>();
-        private LeagueManager LeagueManagerDI => serviceContainer.Get<LeagueManager>();
-        public LeagueManager LeagueManager => LeagueManagerDI;
-        private ScheduleManager ScheduleManager => serviceContainer.Get<ScheduleManager>();
-        private FinanceManager FinanceManager => serviceContainer.Get<FinanceManager>();
+        // --- Dependencies (Injected via Zenject) ---
+        [Inject] public TimeManager TimeManager { get; private set; }
+        [Inject] public LeagueManager LeagueManagerDI { get; private set; }
+        [Inject] public ScheduleManager ScheduleManager { get; private set; }
+        [Inject] public IUIManager UIManagerRef { get; private set; }
+        [Inject] public IMatchSimulationCoordinator simCoordinator { get; private set; } // Renamed for clarity
+        [Inject] public IEventBus EventBus { get; private set; }
+        [Inject] public SaveDataManager SaveDataManager { get; private set; } // Harmonized
+        [Inject] public FinanceManager FinanceManager { get; private set; } // Harmonized
+        [Inject] public TrainingSimulator TrainingSimulator { get; private set; } // Harmonized
+        [Inject] public MoraleSimulator MoraleSimulator { get; private set; } // Harmonized
+        [Inject] public PlayerDevelopment PlayerDevelopment { get; private set; } // Harmonized
 
-        // --- Game Data (Loaded/Managed by GameManager) ---
+        // --- Game Data Lists ---
         public List<LeagueData> AllLeagues { get; private set; } = new();
         public List<TeamData> AllTeams { get; private set; } = new();
         public List<PlayerData> AllPlayers { get; private set; } = new(); // Caution: Potentially large!
         public List<StaffData> AllStaff { get; private set; } = new();
         public TeamData PlayerTeam { get; private set; } // Reference to the player-controlled team within AllTeams
+ 
+        // --- Game State ---
+        public GameState CurrentState { get; private set; } = GameState.MainMenu; // État par défaut
+        
+        // --- Match State ---
+        private MatchState _currentMatchStateForUI; // État du match actuel pour l'UI
 
         // --- Constants ---
         private const string SAVE_FILE_NAME = "handball_manager_save.json";
@@ -133,35 +121,35 @@ namespace HandballManager.Core.GameManager
         private void InitializeSystems()
         {
             // Initialize service container
-            serviceContainer = new ServiceContainer();
+            // serviceContainer = new ServiceContainer();
             
             // Register event bus first
-            serviceContainer.Bind<IEventBus, EventBus>();
+            // serviceContainer.Bind<IEventBus, EventBus>();
             
             // Register core services
-            var timeManager = new TimeManager(new DateTime(2024, 7, 1)); // Default start date
-            serviceContainer.BindInstance(timeManager);
+            // var timeManager = new TimeManager(new DateTime(2024, 7, 1)); // Default start date
+            // serviceContainer.BindInstance(timeManager);
             
             // Find essential MonoBehaviour systems
-            UIManagerRef = UIManager.Instance;
-            if (UIManagerRef == null) Debug.LogError("UIManager could not be found or created!");
-            serviceContainer.BindInstance(UIManagerRef);
+            // UIManagerRef = UIManager.Instance;
+            // if (UIManagerRef == null) Debug.LogError("UIManager could not be found or created!");
+            // serviceContainer.BindInstance(UIManagerRef);
 
             // Register simulation services
-            serviceContainer.Bind<IMatchEngine, MatchEngine>();
-            serviceContainer.Bind<IMatchSimulationCoordinator, MatchSimulationCoordinator>();
-            serviceContainer.BindInstance<TrainingSimulator>(new TrainingSimulator());
-            serviceContainer.BindInstance<MoraleSimulator>(new MoraleSimulator());
-            serviceContainer.BindInstance<PlayerDevelopment>(new PlayerDevelopment());
-            serviceContainer.BindInstance<TransferManager>(new TransferManager());
-            serviceContainer.BindInstance<ContractManager>(new ContractManager());
-            serviceContainer.BindInstance<LeagueManager>(new LeagueManager());
-            serviceContainer.BindInstance<ScheduleManager>(new ScheduleManager());
-            serviceContainer.BindInstance<FinanceManager>(new FinanceManager());
+            // serviceContainer.Bind<IMatchEngine, MatchEngine>();
+            // serviceContainer.Bind<IMatchSimulationCoordinator, MatchSimulationCoordinator>();
+            // serviceContainer.BindInstance<TrainingSimulator>(new TrainingSimulator());
+            // serviceContainer.BindInstance<MoraleSimulator>(new MoraleSimulator());
+            // serviceContainer.BindInstance<PlayerDevelopment>(new PlayerDevelopment());
+            // serviceContainer.BindInstance<TransferManager>(new TransferManager());
+            // serviceContainer.BindInstance<ContractManager>(new ContractManager());
+            // serviceContainer.BindInstance<LeagueManager>(new LeagueManager());
+            // serviceContainer.BindInstance<ScheduleManager>(new ScheduleManager());
+            // serviceContainer.BindInstance<FinanceManager>(new FinanceManager());
             
             // Install simulation bindings
-            var simulationInstaller = gameObject.AddComponent<SimulationInstaller>();
-            simulationInstaller.InstallBindings();
+            // var simulationInstaller = gameObject.AddComponent<SimulationInstaller>();
+            // simulationInstaller.InstallBindings();
             
             Debug.Log("Core systems initialized with dependency injection.");
             
@@ -174,59 +162,81 @@ namespace HandballManager.Core.GameManager
         // --- Game State Management ---
         public void ChangeState(GameState newState)
         {
-            if (CurrentState == newState) return;
-
-            GameState previousState = CurrentState;
-            Debug.Log($"Game State Changing: {previousState} -> {newState}");
-            
-            // Publish state change event before updating state
-            serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent {
-                OldState = CurrentState,
-                NewState = newState
-            });
-            
-            CurrentState = newState;
-
-            // Pause/Resume Time based on state
-            if (TimeManager != null) {
-                bool shouldBePaused = !IsInActivePlayState() && newState != GameState.SimulatingMatch;
-                TimeManager.IsPaused = shouldBePaused;
-            }
-
-            // Trigger actions based on state change ENTERING newState
-            switch (newState)
+            if (CurrentState == newState && newState != GameState.SimulatingMatch) // Allow re-entering sim state
             {
-                case GameState.MainMenu:
-                    // TODO: Unload game data if returning from a game (clear lists etc.)
-                    break;
-                case GameState.Loading:
-                    // Loading visualization is handled by UIManager potentially
-                    break;
-                case GameState.SimulatingMatch:
-                    // Time is paused by the check above
-                    break;
-                // Other states generally just need UI update
-                case GameState.InSeason:
-                case GameState.OffSeason:
-                case GameState.TransferWindow:
-                case GameState.ManagingTeam:
-                case GameState.MatchReport:
-                case GameState.Paused:
-                    break;
+                // Avoid redundant state changes unless it's starting a simulation again
+                // Debug.LogWarning($"Attempted to change state to {newState}, but already in this state.");
+                return;
             }
 
-             // Update UI to reflect the new state AFTER state logic
-             UIManagerRef?.UpdateUIForGameState(newState);
+            GameState oldState = CurrentState;
+            CurrentState = newState;
+            Debug.Log($"GameState changed from {oldState} to {newState}");
+
+            // Notify UI and other systems about the state change
+            UIManagerRef?.UpdateGameStateUI(newState);
+            EventBus?.Publish(new GameStateChangedEvent { OldState = oldState, NewState = newState });
+
+            // Handle state-specific logic (like showing/hiding UI panels)
+            HandleStateChangeUI(oldState, newState);
         }
 
-        /// <summary>Helper to check if the game is in a state where time can advance.</summary>
-        private bool IsInActivePlayState()
+        /// <summary>
+        /// Handles UI changes specifically related to game state transitions.
+        /// Separated from ChangeState for clarity.
+        /// </summary>
+        private void HandleStateChangeUI(GameState oldState, GameState newState)
         {
-             return CurrentState == GameState.InSeason
-                 || CurrentState == GameState.ManagingTeam
-                 || CurrentState == GameState.TransferWindow
-                 || CurrentState == GameState.OffSeason
-                 || CurrentState == GameState.MatchReport; // Allow advancing from report screen
+            // --- Tactics Panel Logic ---
+            // Note: GameState n'a pas de valeurs Timeout ou HalfTime, nous utilisons donc uniquement Paused
+            // Si vous avez besoin de distinguer entre différents types de pauses, vous pouvez utiliser une variable supplémentaire
+            bool shouldShowTactics = newState == GameState.Paused;
+            bool wasShowingTactics = oldState == GameState.Paused;
+
+            if (shouldShowTactics)
+            {
+                // Si nous sommes en pause mais que nous n'avons pas d'état de match, nous utilisons directement la tactique de l'équipe du joueur
+                if (PlayerTeam != null)
+                {
+                    // Deux cas possibles : soit nous avons un état de match valide, soit nous utilisons directement la tactique de l'équipe
+                    if (_currentMatchStateForUI != null)
+                    {
+                        // Cas 1 : Nous avons un état de match valide
+                        // Nous allons récupérer la tactique directement à partir de l'équipe du joueur
+                        // au lieu d'utiliser TeamSim qui cause des problèmes de compilation
+                        var playerTactic = TacticConverter.FromData(PlayerTeam.CurrentTactic ?? new TacticData());
+                        UIManagerRef?.ShowTacticsPanel(playerTactic, true); // Show and enable interaction
+                    }
+                    else
+                    {
+                        // Cas 2 : Nous n'avons pas d'état de match, nous utilisons directement la tactique de l'équipe
+                        var playerTactic = TacticConverter.FromData(PlayerTeam.CurrentTactic ?? new TacticData());
+                        UIManagerRef?.ShowTacticsPanel(playerTactic, true); // Show and enable interaction
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning("Cannot show tactics panel: Match state or Player team is null.");
+                    UIManagerRef?.HideTacticsPanel(); // Ensure hidden if state is invalid
+                }
+            }
+            else if (wasShowingTactics) // If we are LEAVING a state where tactics were shown
+            {
+                UIManagerRef?.HideTacticsPanel();
+            }
+
+            // --- Other UI Panel Logic (Example) ---
+            if (newState == GameState.ManagingTeam)
+            {
+                // Ensure other relevant panels are shown/hidden
+            }
+            // Add more UI handling logic for other states as needed
+        }
+
+        /// <summary>Checks if the game is in a state where time can advance or saving is allowed.</summary>
+        public bool IsInActivePlayState()
+        {
+            return CurrentState == GameState.ManagingTeam || CurrentState == GameState.InSeason || CurrentState == GameState.OffSeason;
         }
 
         // --- Game Actions ---
@@ -249,7 +259,7 @@ namespace HandballManager.Core.GameManager
                     ChangeState(GameState.SimulatingMatch);
                     var progress = new Progress<float>();
                     var cancellationToken = new CancellationTokenSource().Token;
-                    MatchEngine.SimulateMatch(homeTeam, awayTeam, TacticConverter.FromData(homeTeam.CurrentTactic), TacticConverter.FromData(awayTeam.CurrentTactic),
+                    SimulateMatch(homeTeam, awayTeam, TacticConverter.FromData(homeTeam.CurrentTactic), TacticConverter.FromData(awayTeam.CurrentTactic),
                         UnityEngine.Random.Range(1, 999999), progress, cancellationToken);
                     ChangeState(GameState.MatchReport);
                 }
@@ -271,37 +281,62 @@ namespace HandballManager.Core.GameManager
 
             // 1. Clear Existing Data
             AllLeagues.Clear(); AllTeams.Clear(); AllPlayers.Clear(); AllStaff.Clear(); PlayerTeam = null;
-            LeagueManagerDI?.ResetTablesForNewSeason(); // Ensure tables are clear
-            ScheduleManager?.HandleSeasonTransition(); // Clear old schedule
-            ScheduleManager?.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate); // Pass AllTeams explicitly
-            // 2. Load Default Database
-            LoadDefaultDatabase(); // Populates the lists
-
-            // 3. Assign Player Team
-            if (AllTeams.Count > 0) {
-                PlayerTeam = AllTeams[0]; // Simplified: Assign first team
-                Debug.Log($"Player assigned control of team: {PlayerTeam.Name} (ID: {PlayerTeam.TeamID})");
-            } else {
-                Debug.LogError("No teams loaded in database! Cannot start new game.");
-                ChangeState(GameState.MainMenu); UIManagerRef?.DisplayPopup("Error: No teams found in database!");
+            // Ensure managers are available before using them
+            if (LeagueManagerDI == null || ScheduleManager == null || TimeManager == null)
+            {
+                Debug.LogError("Cannot start new game: Core managers not injected!");
+                UIManagerRef?.DisplayPopup("Error: Missing core game components!");
+                ChangeState(GameState.MainMenu); // Revert to main menu
                 return;
             }
+
+            LeagueManagerDI.ResetTablesForNewSeason(); // Ensure tables are clear
+            ScheduleManager.HandleSeasonTransition(); // Clear old schedule
+            // Schedule generation happens after loading teams
+
+            // 2. Load Default Database
+            LoadDefaultDatabase(); // Populates the lists
+            if (AllTeams.Count == 0)
+            {
+                Debug.LogError("Failed to load default database or database is empty!");
+                UIManagerRef?.DisplayPopup("Error: Could not load team data!");
+                ChangeState(GameState.MainMenu); // Revert
+                return;
+            }
+
+            // 3. Assign Player Team
+            PlayerTeam = AllTeams[0]; // Simplified: Assign first team
+            if (PlayerTeam == null) // Should not happen if AllTeams is not empty, but defensive check
+            {
+                 Debug.LogError("Failed to assign player team even though teams exist!");
+                 UIManagerRef?.DisplayPopup("Error: Could not assign player team!");
+                 ChangeState(GameState.MainMenu);
+                 return;
+            }
+            Debug.Log($"Player assigned control of team: {PlayerTeam.Name} (ID: {PlayerTeam.TeamID})");
 
             // 4. Set Initial Time
             TimeManager.SetDate(new DateTime(2024, 7, 1)); // Standard start date
 
             // 5. Initial Setup (schedule, league tables)
-            ScheduleManager?.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate); // Generate AFTER teams are loaded
-            foreach(var league in AllLeagues) { // Initialize tables for all leagues
-                LeagueManagerDI?.InitializeLeagueTable(league.LeagueID, AllTeams, true);
+            ScheduleManager.GenerateNewSchedule(AllTeams, TimeManager.CurrentDate); // Generate AFTER teams are loaded
+            foreach(var league in AllLeagues)
+            { // Initialize tables for all leagues
+                LeagueManagerDI.InitializeLeagueTable(league.LeagueID, AllTeams, true);
             }
 
             // 6. Transition to Initial Game State
             Debug.Log("New Game Setup Complete.");
-            ChangeState(GameState.OffSeason); // Start in OffSeason
-            if(UIManagerRef != null && PlayerTeam != null) {
-                UIManagerRef.ShowTeamScreen(PlayerTeam); // Show team screen initially
+            // Check UIManager again before using
+            if (UIManagerRef != null)
+            {
+                UIManagerRef?.ShowTeamScreen(PlayerTeam); // Show team screen initially
                 ChangeState(GameState.ManagingTeam); // Set state to managing team
+            }
+            else
+            {
+                 Debug.LogError("UIManager not available after setup, cannot show team screen.");
+                 ChangeState(GameState.OffSeason); // Fallback state
             }
         }
 
@@ -326,10 +361,6 @@ namespace HandballManager.Core.GameManager
              Debug.Log($"Loaded {AllLeagues.Count} leagues, {AllTeams.Count} teams, {AllPlayers.Count} players.");
         }
 
-
-        
-        
-
         /// <summary>
         /// Orchestration centrale du chargement :
         /// Toute la logique de répartition des données chargées doit rester ici (GameManager).
@@ -338,17 +369,16 @@ namespace HandballManager.Core.GameManager
         /// </summary>
         public void LoadGame()
         {
-            // Get the SaveDataManager from the service container
-            var saveDataManager = serviceContainer.Get<SaveDataManager>();
-            if (saveDataManager == null)
+            // Use the injected SaveDataManager
+            if (SaveDataManager == null)
             {
-                // Create and register if not already in container
-                saveDataManager = new SaveDataManager();
-                serviceContainer.BindInstance(saveDataManager);
+                Debug.LogError("SaveDataManager not injected. Cannot load game.");
+                UIManagerRef?.DisplayPopup("Error: Save system unavailable.");
+                return;
             }
-            
+
             // Get the most recent save file path
-            string filePath = saveDataManager.GetMostRecentSavePath();
+            string filePath = SaveDataManager.GetMostRecentSavePath();
             if (string.IsNullOrEmpty(filePath))
             {
                 Debug.LogWarning("No save files found."); 
@@ -363,7 +393,7 @@ namespace HandballManager.Core.GameManager
             try
             {
                 // Load the game using the SaveDataManager
-                SaveData saveData = saveDataManager.LoadGame(filePath);
+                SaveData saveData = SaveDataManager.LoadGame(filePath);
 
                 if (saveData != null)
                 {
@@ -402,7 +432,7 @@ namespace HandballManager.Core.GameManager
                     Debug.Log($"Game Loaded Successfully. Date: {TimeManager.CurrentDate.ToShortDateString()}, State: {CurrentState}");
 
                     // Publish load completed event
-                    serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
+                    EventBus?.Publish(new GameStateChangedEvent
                     {
                         OldState = GameState.Loading,
                         NewState = CurrentState
@@ -420,7 +450,8 @@ namespace HandballManager.Core.GameManager
                 UIManagerRef?.DisplayPopup($"Error loading game: {e.Message}");
                 // Revert to main menu on failure
                 AllLeagues.Clear(); AllTeams.Clear(); AllPlayers.Clear(); AllStaff.Clear(); PlayerTeam = null;
-                InitializeSystems(); // Re-initialize to default state
+                // Attempt re-initialization, checking dependencies
+                if (TimeManager != null) InitializeSystems(); else Debug.LogError("Cannot re-initialize systems: TimeManager missing.");
                 ChangeState(GameState.MainMenu);
             }
         }
@@ -433,28 +464,35 @@ namespace HandballManager.Core.GameManager
         /// </summary>
         public void SaveGame()
         {
-             if (!IsInActivePlayState() && CurrentState != GameState.MainMenu && CurrentState != GameState.Paused) {
+             if (!IsInActivePlayState() && CurrentState != GameState.MainMenu && CurrentState != GameState.Paused)
+             {
                  Debug.LogWarning($"Cannot save game in current state: {CurrentState}");
                  UIManagerRef?.DisplayPopup($"Cannot save in state: {CurrentState}"); return;
              }
-            
+
+             // Use the injected SaveDataManager
+             if (SaveDataManager == null)
+             {
+                 Debug.LogError("SaveDataManager not injected. Cannot save game.");
+                 UIManagerRef?.DisplayPopup("Error: Save system unavailable.");
+                 return;
+             }
+             // Check other essential managers needed for saving
+             if (LeagueManagerDI == null || TimeManager == null)
+             {
+                 Debug.LogError("Cannot save game: LeagueManager or TimeManager not available.");
+                 UIManagerRef?.DisplayPopup("Error: Core components missing for save.");
+                 return;
+             }
+
             Debug.Log("Saving Game...");
             UIManagerRef?.DisplayPopup("Saving Game..."); // Temporary popup
 
             try
             {
-                // Get the SaveDataManager from the service container
-                var saveDataManager = serviceContainer.Get<SaveDataManager>();
-                if (saveDataManager == null)
-                {
-                    // Create and register if not already in container
-                    saveDataManager = new SaveDataManager();
-                    serviceContainer.BindInstance(saveDataManager);
-                }
-                 
                 // Get league tables from LeagueManager
                 var leagueTables = LeagueManagerDI?.GetTablesForSave() ?? new Dictionary<int, List<LeagueStandingEntry>>();
-                 string savePath = saveDataManager.SaveGame(
+                 string savePath = SaveDataManager.SaveGame(
                       CurrentState,
                       AllTeams,
                       TimeManager,
@@ -469,7 +507,7 @@ namespace HandballManager.Core.GameManager
                  UIManagerRef?.DisplayPopup("Game Saved!");
 
                 // Publish save completed event
-                serviceContainer.Get<IEventBus>().Publish(new GameStateChangedEvent
+                EventBus?.Publish(new GameStateChangedEvent
                 {
                     OldState = GameState.Loading,
                     NewState = CurrentState
@@ -481,7 +519,6 @@ namespace HandballManager.Core.GameManager
                  UIManagerRef?.DisplayPopup($"Error saving game: {e.Message}");
              }
         }
-
 
         /// <summary>Advances time by one day, triggering relevant daily updates.</summary>
         public void AdvanceTime()
@@ -539,8 +576,10 @@ namespace HandballManager.Core.GameManager
          private void HandleWeekAdvanced()
          {
              Debug.Log($"GameManager handling Week Advanced: Week starting {TimeManager.CurrentDate.ToShortDateString()}");
-             if (LeagueManagerDI == null || FinanceManager == null || TrainingSimulator == null || MoraleSimulator == null) {
-                 Debug.LogError("One or more managers are null during HandleWeekAdvanced!"); return;
+             // Check all required managers for weekly processing
+             if (LeagueManagerDI == null || FinanceManager == null || TrainingSimulator == null || MoraleSimulator == null)
+             { // Added MoraleSimulator check
+                 Debug.LogError("One or more managers are null during HandleWeekAdvanced! Aborting weekly tasks."); return;
              }
 
              // 1. Simulate Training for ALL Teams
@@ -562,7 +601,11 @@ namespace HandballManager.Core.GameManager
         private void HandleMonthAdvanced()
         {
             Debug.Log($"GameManager handling Month Advanced: New Month {TimeManager.CurrentDate:MMMM yyyy}");
-            if (FinanceManager == null) { Debug.LogError("FinanceManager is null during HandleMonthAdvanced!"); return; }
+            // Check required managers for monthly processing
+            if (FinanceManager == null)
+            { 
+                Debug.LogError("FinanceManager is null during HandleMonthAdvanced! Aborting monthly tasks."); return;
+            }
 
             // 1. Monthly Finances
             FinanceManager.ProcessMonthly(AllTeams);
@@ -574,7 +617,14 @@ namespace HandballManager.Core.GameManager
         }
 
         // --- Simulation Trigger ---
-        private IMatchSimulationCoordinator simCoordinator => serviceContainer.Get<IMatchSimulationCoordinator>();
+        // Using the injected simCoordinator from line 61
+
+        // Surcharge qui accepte les arguments supplémentaires mais les ignore
+        public void SimulateMatch(TeamData home, TeamData away, Tactic homeTactic, Tactic awayTactic, int seed, IProgress<float> progress, CancellationToken cancellationToken)
+        {
+            // Appel à la méthode principale en ignorant les arguments supplémentaires
+            SimulateMatch(home, away, homeTactic, awayTactic);
+        }
 
         public async void SimulateMatch(TeamData home, TeamData away, Tactic homeTactic = null, Tactic awayTactic = null)
         {
@@ -702,25 +752,6 @@ namespace HandballManager.Core.GameManager
             // Currently a placeholder for future implementation
         }
 
-
-        // --- FindNextPlayerMatch() --- (Debug Helper)
-        private HandballManager.Data.MatchInfo FindNextPlayerMatch()
-        {
-            if (PlayerTeam == null || ScheduleManager == null) return default;
-
-            List<HandballManager.Data.MatchInfo> upcoming = ScheduleManager.GetUpcomingMatchesForTeam(PlayerTeam.TeamID, TimeManager.CurrentDate);
-            DateTime checkDate = TimeManager.CurrentDate;
-            int safety = 0;
-            // Find next match involving player team, starting from today
-            while (!upcoming.Any(m => m.HomeTeamID == PlayerTeam.TeamID || m.AwayTeamID == PlayerTeam.TeamID) && safety < 365) {
-                checkDate = checkDate.AddDays(1);
-                upcoming = ScheduleManager.GetUpcomingMatchesForTeam(PlayerTeam.TeamID, checkDate);
-                safety++;
-            }
-
-            return upcoming.FirstOrDefault(m => m.HomeTeamID == PlayerTeam.TeamID || m.AwayTeamID == PlayerTeam.TeamID);
-        }
-
         // --- Season Transition Logic ---
         private void CheckSeasonTransition()
          {
@@ -750,13 +781,24 @@ namespace HandballManager.Core.GameManager
         {
             if (CurrentState == GameState.OffSeason) return; // Avoid double trigger
             Debug.Log($"--- Starting Off-Season {TimeManager.CurrentDate.Year} ---");
+
+            // Check dependencies before proceeding
+            if (LeagueManagerDI == null || PlayerDevelopment == null || ScheduleManager == null || TimeManager == null)
+            {
+                Debug.LogError("Cannot start off-season: Missing required managers!");
+                // Attempt to recover or revert state?
+                // For now, just log and potentially stop further processing.
+                // ChangeState(GameState.MainMenu); // Or a specific error state?
+                return;
+            }
+
             ChangeState(GameState.OffSeason);
 
-            LeagueManagerDI?.FinalizeSeason(AllTeams); // Awards, Promotions/Relegations (AllTeams injected)
+            LeagueManagerDI.FinalizeSeason(AllTeams); // Awards, Promotions/Relegations (AllTeams injected)
 
             // ContractManager?.ProcessExpiries(AllPlayers, AllStaff, AllTeams); // TODO
 
-            foreach(var player in AllPlayers) { PlayerDevelopment?.ProcessAnnualDevelopment(player); }
+            foreach(var player in AllPlayers) { PlayerDevelopment.ProcessAnnualDevelopment(player); }
 
             // Staff Expiries TODO
             // News TODO
@@ -771,6 +813,15 @@ namespace HandballManager.Core.GameManager
         {
              if (CurrentState == GameState.InSeason) return; // Avoid double trigger
              Debug.Log($"--- Starting New Season {TimeManager.CurrentDate.Year}/{(TimeManager.CurrentDate.Year + 1)} ---");
+
+             // Check dependencies
+             if (LeagueManagerDI == null || TimeManager == null)
+             {
+                 Debug.LogError("Cannot start new season: Missing LeagueManager or TimeManager!");
+                 // ChangeState(GameState.MainMenu); // Or error state
+                 return;
+             }
+
              ChangeState(GameState.InSeason);
 
              // Ensure League Tables are ready/reset for the new season
@@ -787,7 +838,6 @@ namespace HandballManager.Core.GameManager
              UIManagerRef?.DisplayPopup("The new season has started!");
         }
 
-
         // --- OnDestroy ---
         private void OnDestroy()
         {
@@ -797,22 +847,28 @@ namespace HandballManager.Core.GameManager
              if (instance == this) { instance = null; }
          }
 
-
         // --- Helper Methods ---
         private TeamData CreatePlaceholderTeam(int id, string name, int reputation, float budget)
         {
-            TeamData team = new TeamData { TeamID = id, Name = name, Reputation = reputation, Budget = budget, LeagueID = 1 };
-            team.CurrentTactic = new TacticData { Name = "Balanced Default", TacticID = Guid.NewGuid() };
-            team.Roster = new List<PlayerData>();
-            // Add players (Ensure PlayerData constructor assigns ID)
-            team.AddPlayer(CreatePlaceholderPlayer(name + " GK", PlayerPosition.Goalkeeper, 25, 65, 75, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " PV", PlayerPosition.Pivot, 28, 70, 72, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " LB", PlayerPosition.LeftBack, 22, 72, 85, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " RW", PlayerPosition.RightWing, 24, 68, 78, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " CB", PlayerPosition.CentreBack, 26, 75, 78, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " RB", PlayerPosition.RightBack, 23, 66, 82, team.TeamID));
-            team.AddPlayer(CreatePlaceholderPlayer(name + " LW", PlayerPosition.LeftWing, 21, 69, 88, team.TeamID));
-            for(int i=0; i<7; i++) {
+            // Check dependencies used by CreatePlaceholderPlayer
+            if (TimeManager == null)
+            {
+                Debug.LogError("Cannot create placeholder team: TimeManager is null.");
+                return null; // Cannot create players without time context for contracts
+            }
+
+             TeamData team = new TeamData { TeamID = id, Name = name, Reputation = reputation, Budget = budget, LeagueID = 1 };
+             team.CurrentTactic = new TacticData { Name = "Balanced Default", TacticID = Guid.NewGuid() };
+             team.Roster = new List<PlayerData>();
+             // Add players (Ensure PlayerData constructor assigns ID)
+             team.AddPlayer(CreatePlaceholderPlayer(name + " GK", PlayerPosition.Goalkeeper, 25, 65, 75, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " PV", PlayerPosition.Pivot, 28, 70, 72, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " LB", PlayerPosition.LeftBack, 22, 72, 85, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " RW", PlayerPosition.RightWing, 24, 68, 78, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " CB", PlayerPosition.CentreBack, 26, 75, 78, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " RB", PlayerPosition.RightBack, 23, 66, 82, team.TeamID));
+             team.AddPlayer(CreatePlaceholderPlayer(name + " LW", PlayerPosition.LeftWing, 21, 69, 88, team.TeamID));
+             for(int i=0; i<7; i++) {
                  PlayerPosition pos = (PlayerPosition)(i % 7);
                  if(pos == PlayerPosition.Goalkeeper) pos = PlayerPosition.Pivot; // Avoid too many GKs
                  team.AddPlayer(CreatePlaceholderPlayer(name + $" Sub{i+1}", pos, UnityEngine.Random.Range(19, 29), UnityEngine.Random.Range(50, 65), UnityEngine.Random.Range(60, 80), team.TeamID));
@@ -824,19 +880,26 @@ namespace HandballManager.Core.GameManager
         private PlayerData CreatePlaceholderPlayer(string name, PlayerPosition pos, int age, int caEstimate, int pa, int? teamId)
         {
             // Assumes PlayerData constructor handles ID generation
-            PlayerData player = new PlayerData {
-                FirstName = name.Contains(" ") ? name.Split(' ')[0] : name, LastName = name.Contains(" ") ? name.Split(' ')[1] : "Player", Age = age,
-                PrimaryPosition = pos, PotentialAbility = pa, CurrentTeamID = teamId,
-                ShootingAccuracy = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90), Passing = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90),
-                Speed = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-10, 10), 30, 90), Strength = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-10, 10), 30, 90),
-                DecisionMaking = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90),
-                Reflexes = (pos == PlayerPosition.Goalkeeper) ? Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90) : 20,
-                PositioningGK = (pos == PlayerPosition.Goalkeeper) ? Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90) : 20,
-                Wage = 1000 + (caEstimate * UnityEngine.Random.Range(40, 60)), ContractExpiryDate = TimeManager.CurrentDate.AddYears(UnityEngine.Random.Range(1, 4)),
-                Morale = UnityEngine.Random.Range(0.6f, 0.8f), Condition = 1.0f, Resilience = UnityEngine.Random.Range(40, 85)
-            };
-            // player.CalculateCurrentAbility(); // Constructor should call this
-            return player;
+            // Check dependency needed for contract date calculation
+            if (TimeManager == null) 
+            {
+                 Debug.LogError("Cannot create placeholder player: TimeManager is null.");
+                 return null; // Cannot set contract expiry
+            }
+
+             PlayerData player = new PlayerData {
+                 FirstName = name.Contains(" ") ? name.Split(' ')[0] : name, LastName = name.Contains(" ") ? name.Split(' ')[1] : "Player", Age = age,
+                 PrimaryPosition = pos, PotentialAbility = pa, CurrentTeamID = teamId,
+                 ShootingAccuracy = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90), Passing = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90),
+                 Speed = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-10, 10), 30, 90), Strength = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-10, 10), 30, 90),
+                 DecisionMaking = Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90),
+                 Reflexes = (pos == PlayerPosition.Goalkeeper) ? Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90) : 20,
+                 PositioningGK = (pos == PlayerPosition.Goalkeeper) ? Mathf.Clamp(caEstimate + UnityEngine.Random.Range(-5, 5), 30, 90) : 20,
+                 Wage = 1000 + (caEstimate * UnityEngine.Random.Range(40, 60)), ContractExpiryDate = TimeManager.CurrentDate.AddYears(UnityEngine.Random.Range(1, 4)),
+                 Morale = UnityEngine.Random.Range(0.6f, 0.8f), Condition = 1.0f, Resilience = UnityEngine.Random.Range(40, 85)
+             };
+             // player.CalculateCurrentAbility(); // Constructor should call this
+             return player;
         }
 
         private TrainingFocus GetAITrainingFocus(TeamData team) {

@@ -1,6 +1,8 @@
+using UnityEngine; // For ScriptableObject and .name property
 using HandballManager.Core; // For Enums
 using System; // For Serializable
 using System.Collections.Generic; // For potentially storing player instructions
+using HandballManager.Data;
 
 namespace HandballManager.Gameplay
 {
@@ -20,12 +22,10 @@ namespace HandballManager.Gameplay
 
 
         // --- Core Formations ---
-        /// <summary>Formation used during offensive phases. Could be enum or struct later.</summary>
-        public string OffensiveFormation { get; set; } = "Standard Backcourt"; // Example string, could be more structured
-        public FormationData OffensiveFormationData { get; set; } = new FormationData();
-        /// <summary>The primary defensive system employed.</summary>
-        public DefensiveSystem DefensiveSystem { get; set; } = DefensiveSystem.SixZero;
-        public FormationData DefensiveFormationData { get; set; } = new FormationData();
+        /// <summary>Data asset defining the offensive formation.</summary>
+        public FormationData OffensiveFormationData { get; set; }
+        /// <summary>Data asset defining the defensive formation.</summary>
+        public FormationData DefensiveFormationData { get; set; }
 
         // --- General Team Instructions ---
         /// <summary>Speed at which the team builds up attacks.</summary>
@@ -63,7 +63,10 @@ namespace HandballManager.Gameplay
 
          public override string ToString()
          {
-             return $"{TacticName} (Off: {OffensiveFormation}, Def: {DefensiveSystem}, Pace: {Pace})";
+             // Use the '.FormationName' property from the ScriptableObject definition
+             string offName = OffensiveFormationData?.FormationName ?? "None";
+             string defName = DefensiveFormationData?.FormationName ?? "None";
+             return $"{TacticName} (Off: {offName}, Def: {defName}, Pace: {Pace})";
          }
     }
 

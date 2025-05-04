@@ -76,7 +76,7 @@ namespace HandballManager.Simulation.Events.Handlers
         {
              // --- Logic copied from MatchSimulator ---
               if (player == null) return;
-              if (player.CurrentAction == PlayerAction.Suspended) return;
+              if (player.IsSuspended()) return;
 
               // Persist receiving state unless pass was intercepted or outcome dictates reset
               // This logic might be better handled by AI re-evaluating
@@ -90,50 +90,58 @@ namespace HandballManager.Simulation.Events.Handlers
 
         public virtual void HandlePossessionChange(MatchState state, int newPossessionTeamId, bool ballIsLoose = false)
         {
-            // Reset ReceivedPassRecently for all players on possession change
-            if (state != null)
+            if (state == null)
             {
-                foreach (var player in state.AllPlayers.Values)
-                {
-                    if (player != null)
-                        player.ReceivedPassRecently = false;
-                }
+                Debug.LogError("[DefaultMatchEventHandler] HandlePossessionChange called with null MatchState.");
+                return;
             }
-            // Réinitialiser le jeu passif sur changement de possession
+            if (_phaseManager == null)
+            {
+                Debug.LogError("[DefaultMatchEventHandler] PhaseManager is not set for HandlePossessionChange.");
+                return;
+            }
+
+            // Reset pass flags and passive play
+            foreach (var player in state.AllPlayers.Values)
+            {
+                if (player != null)
+                    player.ReceivedPassRecently = false;
+            }
             _passivePlayManager?.ResetPassivePlay();
 
-            // --- Logic copied from MatchSimulator ---
-             if (state == null) return;
-             if (_phaseManager == null) { Debug.LogError("[DefaultMatchEventHandler] PhaseManager is not set for HandlePossessionChange."); return; }
+            // Contest: loose ball or no possession
+            if (ballIsLoose || newPossessionTeamId == -1)
+            {
+                state.PossessionTeamId = -1;
+                if (state.Ball?.Holder != null)
+                {
+                    state.Ball.Holder.HasBall = false;
+                    state.Ball.SetHolder(null);
+                }
+                TransitionToPhase(state, GamePhase.ContestedBall);
+                return;
+            }
 
-             int previousPossessionTeamId = state.PossessionTeamId;
-             bool possessionTrulyChanged = previousPossessionTeamId != newPossessionTeamId && previousPossessionTeamId != -1 && newPossessionTeamId != -1;
+            int previous = state.PossessionTeamId;
+            state.PossessionTeamId = newPossessionTeamId;
 
-             state.PossessionTeamId = newPossessionTeamId;
+            // Gained from contested
+            if (previous == -1)
+            {
+                var nextPhase = (newPossessionTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack;
+                TransitionToPhase(state, nextPhase);
+                return;
+            }
 
-             GamePhase nextPhase = state.CurrentPhase;
+            // Changed possession during play
+            if (previous != newPossessionTeamId)
+            {
+                var transitionPhase = (newPossessionTeamId == 0) ? GamePhase.TransitionToHomeAttack : GamePhase.TransitionToAwayAttack;
+                TransitionToPhase(state, transitionPhase);
+                return;
+            }
 
-             if (ballIsLoose || newPossessionTeamId == -1) {
-                  nextPhase = GamePhase.ContestedBall;
-                  // Log("Possession contested (Loose Ball).", state); // Internal log call
-             } else if (possessionTrulyChanged) {
-                  nextPhase = (newPossessionTeamId == 0) ? GamePhase.TransitionToHomeAttack : GamePhase.TransitionToAwayAttack;
-                  // Log($"Possession changes to Team {newPossessionTeamId}.", state, GetTeamIdFromSimId(state, newPossessionTeamId));
-             } else if (newPossessionTeamId != -1 && previousPossessionTeamId == -1) {
-                  nextPhase = (newPossessionTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack;
-                  // Log($"Team {newPossessionTeamId} gained possession.", state, GetTeamIdFromSimId(state, newPossessionTeamId));
-             }
-
-             if (ballIsLoose || newPossessionTeamId == -1) {
-                  if(state.Ball?.Holder != null) { state.Ball.Holder.HasBall = false; state.Ball.SetHolder(null); }
-                  if (nextPhase != GamePhase.ContestedBall) { nextPhase = GamePhase.ContestedBall; }
-             } else if (newPossessionTeamId != -1 && state.Ball?.Holder != null) {
-                  if (nextPhase == GamePhase.ContestedBall || nextPhase == GamePhase.TransitionToHomeAttack || nextPhase == GamePhase.TransitionToAwayAttack) {
-                       nextPhase = (newPossessionTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack;
-                  }
-             }
-
-             _phaseManager.TransitionToPhase(state, nextPhase); // Use injected PhaseManager
+            // No phase change if possession remains the same
         }
 
         public virtual void LogEvent(MatchState state, string description, int? teamId = null, int? playerId = null)
@@ -154,7 +162,7 @@ namespace HandballManager.Simulation.Events.Handlers
              Debug.LogError($"[DefaultMatchEventHandler] Error during '{stepName}' at Time {currentTime:F1}s: {ex?.Message ?? "Unknown Error"}\n{ex?.StackTrace ?? "No stack trace"}");
              if (state != null) {
                  // Force the simulation to end immediately
-                 _phaseManager?.TransitionToPhase(state, GamePhase.Finished); // Use PhaseManager
+                 TransitionToPhase(state, GamePhase.Finished); // Use PhaseManager
              }
              LogEvent(state, $"CRITICAL ERROR during {stepName} - Simulation aborted. Error: {ex?.Message ?? "Unknown Error"}");
         }
@@ -277,6 +285,8 @@ namespace HandballManager.Simulation.Events.Handlers
             IncrementStat(state, gk, stats => stats.SavesMade++);
             if (shooter != null) IncrementStat(state, shooter, stats => stats.ShotsOnTarget++);
             state.Ball.SetPossession(gk);
+            // Ball is not loose after a GK save if the GK controls it
+            state.Ball.IsLooseBallSituation = false;
             HandlePossessionChange(state, gk.TeamSimId);
             ResetPlayerActionState(gk, result.Outcome);
             if (shooter != null) ResetPlayerActionState(shooter, result.Outcome);
@@ -307,6 +317,8 @@ namespace HandballManager.Simulation.Events.Handlers
             float reboundSpeed = SimConstants.BALL_DEFAULT_HEIGHT * (float)state.RandomGenerator.NextDouble() * (BLOCK_REBOUND_MAX_SPEED_FACTOR - BLOCK_REBOUND_MIN_SPEED_FACTOR) + BLOCK_REBOUND_MIN_SPEED_FACTOR; // ERROR: Was using SHOT_BASE_SPEED, likely meant something smaller
             reboundSpeed = Mathf.Clamp(reboundSpeed, BLOCK_REBOUND_MIN_SPEED_FACTOR, BLOCK_REBOUND_MAX_SPEED_FACTOR); // Clamp rebound speed reasonably
             state.Ball.MakeLoose(CoordinateUtils.To3DGround(impactPos), CoordinateUtils.To3DGround(finalReboundDir * reboundSpeed, 0f) , blocker.TeamSimId, blocker); // Convert vel to 3D
+            // Mark the ball as loose for AI/gameplay purposes after a block
+            state.Ball.IsLooseBallSituation = true;
             HandlePossessionChange(state, -1, true);
             ResetPlayerActionState(blocker, result.Outcome);
             if (shooter != null) ResetPlayerActionState(shooter, result.Outcome);
@@ -372,7 +384,7 @@ namespace HandballManager.Simulation.Events.Handlers
             }
             // --- Logic copied from MatchSimulator ---
             SimPlayer scorer = result.PrimaryPlayer;
-            if (scorer?.BaseData == null) { LogEvent(state, "Goal registered with invalid scorer data!"); _phaseManager?.TransitionToPhase(state, GamePhase.Finished); return; } // Use PhaseManager
+            if (scorer?.BaseData == null) { LogEvent(state, "Goal registered with invalid scorer data!"); TransitionToPhase(state, GamePhase.Finished); return; } // Use PhaseManager
             int scoringTeamId = scorer.TeamSimId;
             bool wasPenalty = state.CurrentPhase == GamePhase.HomePenalty || state.CurrentPhase == GamePhase.AwayPenalty;
             if (scoringTeamId == 0) state.HomeScore++; else state.AwayScore++;
@@ -383,7 +395,7 @@ namespace HandballManager.Simulation.Events.Handlers
             state.Ball.Stop(); state.Ball.Position = _geometry.Center; // Use Geometry
             int kickoffTeamId = 1 - scoringTeamId;
             HandlePossessionChange(state, kickoffTeamId); // Ensure possession is set correctly BEFORE phase transition
-            _phaseManager?.TransitionToPhase(state, GamePhase.PreKickOff); // Use PhaseManager
+            TransitionToPhase(state, GamePhase.PreKickOff); // Use PhaseManager
              foreach(var p in state.PlayersOnCourt.ToList()) { if (p != null && !p.IsSuspended()) ResetPlayerActionState(p, result.Outcome); }
         }
 
@@ -407,101 +419,152 @@ namespace HandballManager.Simulation.Events.Handlers
 
         private void HandleFoul(ActionResult result, MatchState state)
         {
-            // Ensure defender 6m entry always results in PenaltyThrow
-            if (result.Reason == "Defender entered 6m zone" && result.FoulSeverity != FoulSeverity.PenaltyThrow)
-            {
-                result.FoulSeverity = FoulSeverity.PenaltyThrow;
-            }
-            // --- Suivi des stats individuelles ---
-            if (result.PrimaryPlayer != null)
-            {
-                int foulerId = result.PrimaryPlayer.GetPlayerId();
-                if (!state.PlayerStats.ContainsKey(foulerId))
-                    state.PlayerStats[foulerId] = new PlayerMatchStats();
-                state.PlayerStats[foulerId].FoulsCommitted++;
-                state.PlayerStats[foulerId].Participated = true;
-            }
-            // --- Logic copied from MatchSimulator ---
-            SimPlayer committer = result.PrimaryPlayer;
-            SimPlayer victim = result.SecondaryPlayer;
+            SimPlayer foulingPlayer = result.PrimaryPlayer;
+            SimPlayer fouledPlayer = result.SecondaryPlayer;
             FoulSeverity severity = result.FoulSeverity;
 
-            // --- Disciplinary escalation logic: 3x2min = red card ---
-            if (committer != null && severity == FoulSeverity.TwoMinuteSuspension)
+            if (foulingPlayer == null || state == null)
             {
-                committer.TwoMinuteSuspensionCount++;
-                if (committer.TwoMinuteSuspensionCount >= 3)
-                {
-                    severity = FoulSeverity.RedCard;
-                }
-            }
-
-            // Ensure severity is used for all subsequent logic
-            result.FoulSeverity = severity;
-            // Use 2D position for foul location (fallbacks: impact, victim, committer)
-            Vector2 foulLocation = result.ImpactPosition ?? victim?.Position ?? committer?.Position ?? Vector2.zero;
-
-            // --- Disciplinary sanction logic ---
-            if (committer != null)
-            {
-                switch (severity)
-                {
-                    case FoulSeverity.FreeThrow:
-            case FoulSeverity.PenaltyThrow:
-                // Only give yellow if not already suspended or sent off
-                if (committer.YellowCardCount == 0 && committer.TwoMinuteSuspensionCount == 0)
-                {
-                    committer.YellowCardCount++;
-                    LogEvent(state, $"Yellow card for {committer.BaseData?.FullName ?? "Unknown"}.", committer.GetTeamId(), committer.GetPlayerId());
-                    _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer after yellow card
-                }
-                break;
-                    case FoulSeverity.TwoMinuteSuspension:
-                committer.TwoMinuteSuspensionCount++;
-                committer.SuspensionTimer = DEFAULT_SUSPENSION_TIME;
-                LogEvent(state, $"2-minute suspension for {committer.BaseData?.FullName ?? "Unknown"} (Suspensions: {committer.TwoMinuteSuspensionCount}).", committer.GetTeamId(), committer.GetPlayerId());
-                _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer after 2-min suspension
-                break;
-                    case FoulSeverity.RedCard:
-                        committer.IsOnCourt = false;
-                        committer.SuspensionTimer = RED_CARD_SUSPENSION_TIME;
-                        LogEvent(state, $"Red card for {committer.BaseData?.FullName ?? "Unknown"} (sent off).", committer.GetTeamId(), committer.GetPlayerId());
-                        break;
-                }
-            }
-
-            if (victim == null)
-            {
-                Debug.LogError("[DefaultMatchEventHandler] HandleFoul called with null victim.");
+                Debug.LogError("[DefaultMatchEventHandler] HandleFoul called with null player or state.");
                 return;
             }
-            int victimTeamId = victim.TeamSimId;
-            HandlePossessionChange(state, victimTeamId);
 
-            bool isPenaltyAreaFoul = _geometry.IsInGoalArea(foulLocation, victimTeamId == 1); // Use Geometry
-            bool deniedClearChance = severity == FoulSeverity.RedCard || severity == FoulSeverity.TwoMinuteSuspension;
-
-            if (isPenaltyAreaFoul && deniedClearChance && severity != FoulSeverity.OffensiveFoul) {
-                IncrementStat(state, victimTeamId, stats => stats.PenaltiesAwarded++);
-                GamePhase nextPhase = (victimTeamId == 0) ? GamePhase.HomePenalty : GamePhase.AwayPenalty;
-                LogEvent(state, $"7m Penalty awarded to Team {victimTeamId}.", GetTeamIdFromSimId(state, victimTeamId));
-                _phaseManager?.TransitionToPhase(state, nextPhase); // Use PhaseManager
-            } else {
-                Vector2 opponentGoalCenter = _geometry.GetOpponentGoalCenter(victimTeamId); // Use Geometry
-                if (Vector2.Distance(foulLocation, opponentGoalCenter) < _geometry.FreeThrowLineRadius) {
-                    Vector2 directionFromGoal = (foulLocation - opponentGoalCenter);
-                    if (directionFromGoal.sqrMagnitude < MIN_DISTANCE_CHECK_SQ) directionFromGoal = Vector2.right * (victimTeamId == 0 ? -1f : 1f);
-                    foulLocation = opponentGoalCenter + directionFromGoal.normalized * _geometry.FreeThrowLineRadius; // Recalculate 2D location
-                    state.Ball.Position = CoordinateUtils.To3DGround(foulLocation); // Update 3D ball pos
-                }
-                GamePhase nextPhase = (victimTeamId == 0) ? GamePhase.HomeSetPiece : GamePhase.AwaySetPiece;
-                LogEvent(state, $"Free throw awarded to Team {victimTeamId}.", GetTeamIdFromSimId(state, victimTeamId));
-                _phaseManager?.TransitionToPhase(state, nextPhase); // Use PhaseManager
+            // Check for specific foul reasons FIRST, as they might override severity
+            if (result.Reason == "Defender entered 6m zone")
+            {
+                severity = FoulSeverity.PenaltyThrow;
+                LogEvent(state, "Foul reason updated to PenaltyThrow: Defender entered 6m zone.", foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
             }
-            ResetPlayerActionState(committer, result.Outcome);
-            ResetPlayerActionState(victim, result.Outcome);
-        }
 
+            string foulDesc = $"Foul by {foulingPlayer.BaseData?.FullName ?? "Unknown"}";
+            if (fouledPlayer != null) foulDesc += $" on {fouledPlayer.BaseData?.FullName ?? "Unknown"}";
+            foulDesc += $" ({severity})";
+
+            LogEvent(state, foulDesc, foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
+            IncrementStat(state, foulingPlayer, p => p.FoulsCommitted++);
+
+            // --- Suspension/Red Card Escalation Logic ---
+            FoulSeverity finalSeverity = severity; // Use this for subsequent logic
+
+            if (finalSeverity == FoulSeverity.TwoMinuteSuspension)
+            {
+                foulingPlayer.TwoMinuteSuspensionCount++;
+                LogEvent(state, $"{foulingPlayer.BaseData?.FullName ?? "Unknown"} receives 2-minute suspension ({foulingPlayer.TwoMinuteSuspensionCount} total).", foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
+
+                if (foulingPlayer.TwoMinuteSuspensionCount >= 3)
+                {
+                    LogEvent(state, $"Third 2-minute suspension results in RED CARD for {foulingPlayer.BaseData?.FullName ?? "Unknown"}!", foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
+                    finalSeverity = FoulSeverity.RedCard; // Escalate to Red Card
+                }
+            }
+
+            // --- Apply Disciplinary Sanctions based on FINAL severity ---
+            if (finalSeverity == FoulSeverity.TwoMinuteSuspension)
+            {
+                // Apply 2-minute suspension
+                foulingPlayer.SuspensionTimer = DEFAULT_SUSPENSION_TIME;
+                foulingPlayer.IsOnCourt = false; // Remove from court immediately
+
+foulingPlayer.CurrentAction = PlayerAction.Idle;
+                var teamOnCourt = state.GetTeamOnCourt(foulingPlayer.TeamSimId);
+                if (teamOnCourt != null && teamOnCourt.Contains(foulingPlayer))
+                {
+                    teamOnCourt.Remove(foulingPlayer);
+                }
+                IncrementStat(state, foulingPlayer, p => p.TwoMinuteSuspensions++);
+                _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer
+            }
+            else if (finalSeverity == FoulSeverity.RedCard)
+            {
+                // Apply Red Card penalty
+                LogEvent(state, $"RED CARD for {foulingPlayer.BaseData?.FullName ?? "Unknown"}! Player permanently removed.", foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
+                foulingPlayer.SuspensionTimer = RED_CARD_SUSPENSION_TIME; // Effectively permanent
+                foulingPlayer.CurrentAction = PlayerAction.Idle; 
+                var teamOnCourt = state.GetTeamOnCourt(foulingPlayer.TeamSimId);
+                if (teamOnCourt != null && teamOnCourt.Contains(foulingPlayer))
+                {
+                    teamOnCourt.Remove(foulingPlayer);
+                }
+                var teamBench = foulingPlayer.TeamSimId == 0 ? state.HomeBench : state.AwayBench;
+                if (teamBench != null && teamBench.Contains(foulingPlayer))
+                {
+                    teamBench.Remove(foulingPlayer);
+                }
+                IncrementStat(state, foulingPlayer, p => p.RedCards++);
+                state.TeamPenaltyTimer[foulingPlayer.TeamSimId] = DEFAULT_SUSPENSION_TIME;
+                LogEvent(state, $"Team {foulingPlayer.TeamSimId} plays shorthanded for 2 minutes due to red card.", foulingPlayer.GetTeamId());
+            }
+            else if (finalSeverity != FoulSeverity.OffensiveFoul && (finalSeverity == FoulSeverity.FreeThrow || finalSeverity == FoulSeverity.PenaltyThrow))
+            { 
+                // Check for Yellow Card (only if not already suspended/sent off and no previous yellow)
+                // Note: This logic might need refinement based on specific rules (e.g., progressive punishments)
+                // For now, a simple check: give yellow for 'significant' fouls if not already carded/suspended.
+                if (foulingPlayer.YellowCardCount == 0 && foulingPlayer.SuspensionTimer <= 0)
+                { 
+                    foulingPlayer.YellowCardCount++;
+                    LogEvent(state, $"Yellow card for {foulingPlayer.BaseData?.FullName ?? "Unknown"}.", foulingPlayer.GetTeamId(), foulingPlayer.GetPlayerId());
+                    _passivePlayManager?.ResetAttackTimer(); // Reset passive play timer after yellow card
+                }
+            }
+
+            // --- Determine Restart --- 
+            if (fouledPlayer == null) {
+                Debug.LogWarning("[DefaultMatchEventHandler] Fouled player is null, cannot determine restart accurately.");
+                // Default to possession change if possible, but phase transition might be wrong
+                HandlePossessionChange(state, 1 - foulingPlayer.TeamSimId);
+                ResetPlayerActionState(foulingPlayer, result.Outcome);
+                return;
+            }
+
+            int victimTeamId = fouledPlayer.TeamSimId;
+            HandlePossessionChange(state, victimTeamId); // Give possession to fouled team
+
+            Vector2 foulLocation = result.ImpactPosition ?? fouledPlayer.Position; // Use impact or victim position
+            bool isPenaltyAreaFoul = _geometry.IsInGoalArea(foulLocation, victimTeamId == 1); // Is foul inside the defending goal area?
+            bool deniedClearChance = finalSeverity == FoulSeverity.RedCard || finalSeverity == FoulSeverity.TwoMinuteSuspension || finalSeverity == FoulSeverity.PenaltyThrow;
+
+            GamePhase nextPhase;
+            if ((isPenaltyAreaFoul || finalSeverity == FoulSeverity.PenaltyThrow) && finalSeverity != FoulSeverity.OffensiveFoul) // Penalty awarded
+            {
+                IncrementStat(state, victimTeamId, stats => stats.PenaltiesAwarded++);
+                if (fouledPlayer != null)
+{
+    int id = fouledPlayer.GetPlayerId();
+    if (!state.PlayerStats.ContainsKey(id))
+        state.PlayerStats[id] = new PlayerMatchStats();
+    state.PlayerStats[id].PenaltiesWon++;
+    state.PlayerStats[id].Participated = true;
+}
+                nextPhase = (victimTeamId == 0) ? GamePhase.HomePenalty : GamePhase.AwayPenalty;
+                LogEvent(state, $"7m Penalty awarded to Team {victimTeamId}.", victimTeamId);
+            }
+            else // Free throw awarded
+            {
+                Vector2 opponentGoalCenter = _geometry.GetOpponentGoalCenter(victimTeamId);
+                Vector2 freeThrowLinePos = opponentGoalCenter + (foulLocation - opponentGoalCenter).normalized * _geometry.FreeThrowLineRadius;
+
+                // If foul was between 6m and 9m lines, restart is from the 9m line directly outwards from goal
+                if (!_geometry.IsInGoalArea(foulLocation, victimTeamId == 1) && Vector2.Distance(foulLocation, opponentGoalCenter) < _geometry.FreeThrowLineRadius)
+                {
+                    foulLocation = freeThrowLinePos;
+                }
+                // Else, restart from the place of the foul (unless offensive foul near own goal? Needs check)
+                // For now, clamp position just to be safe
+                foulLocation.x = Mathf.Clamp(foulLocation.x, 0f, _geometry.PitchLength);
+                foulLocation.y = Mathf.Clamp(foulLocation.y, 0f, _geometry.PitchWidth);
+
+                state.Ball.Position = CoordinateUtils.To3DGround(foulLocation); // Set ball position for restart
+                state.Ball.Stop(); // Stop ball momentum
+                nextPhase = (victimTeamId == 0) ? GamePhase.HomeSetPiece : GamePhase.AwaySetPiece;
+                LogEvent(state, $"Free throw awarded to Team {victimTeamId}.", victimTeamId);
+            }
+
+            TransitionToPhase(state, nextPhase); // Transition to the determined phase
+
+            // Reset actions for involved players
+            ResetPlayerActionState(foulingPlayer, result.Outcome);
+            ResetPlayerActionState(fouledPlayer, result.Outcome);
+        }
 
         public virtual void HandleOutOfBounds(ActionResult result, MatchState state, Vector3? intersectionPoint3D = null)
         {
@@ -516,7 +579,7 @@ namespace HandballManager.Simulation.Events.Handlers
              RestartInfo restart = DetermineRestartTypeAndPosition(state, restartPosition3D, lastTouchTeamId, receivingTeamId);
              receivingTeamId = restart.ReceivingTeamId;
 
-             LogEvent(state, $"Ball out of bounds ({restart.Type}). Possession to Team {receivingTeamId}.", GetTeamIdFromSimId(state, receivingTeamId));
+             LogEvent(state, $"Ball out of bounds ({restart.Type}). Possession to Team {receivingTeamId}.", receivingTeamId);
 
              HandlePossessionChange(state, receivingTeamId);
              state.Ball.Stop();
@@ -526,10 +589,15 @@ namespace HandballManager.Simulation.Events.Handlers
 
              if (thrower != null) {
                  state.Ball.SetPossession(thrower);
+                 // Ball is not loose after a throw-in if a player controls it
+                 state.Ball.IsLooseBallSituation = false;
                  ResetPlayerActionState(thrower);
                  GamePhase nextPhase = restart.IsGoalThrow ? ((receivingTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack) : ((receivingTeamId == 0) ? GamePhase.HomeSetPiece : GamePhase.AwaySetPiece);
-                 _phaseManager?.TransitionToPhase(state, nextPhase); // Use PhaseManager
+                 LogEvent(state, $"Throw-in by {thrower?.BaseData?.FullName ?? "Unknown"} for Team {receivingTeamId}.", receivingTeamId, thrower?.GetPlayerId());
+                 TransitionToPhase(state, nextPhase);
              } else {
+                 // No thrower found: ball remains loose on the field
+                 state.Ball.IsLooseBallSituation = true;
                  Debug.LogWarning($"No thrower found for {restart.Type} for Team {receivingTeamId} at {state.Ball.Position}");
                  state.Ball.MakeLoose(state.Ball.Position, Vector3.zero, receivingTeamId);
                  HandlePossessionChange(state, -1, true);

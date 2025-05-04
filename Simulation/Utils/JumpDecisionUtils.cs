@@ -21,7 +21,7 @@ namespace HandballManager.Simulation.Utils
 
             var pos = playerData.BaseData?.PrimaryPosition ?? PlayerPosition.Goalkeeper; // Default to Goalkeeper if null
             bool hasStamina = playerData.Stamina > 0.2f;
-            if (playerData.CurrentAction == PlayerAction.Jumping || !hasStamina)
+            if (playerData.CurrentAction == PlayerAction.JumpingForShot || !hasStamina)
                 return false;
 
             // Detect counter-attack
@@ -103,7 +103,7 @@ namespace HandballManager.Simulation.Utils
             float distanceToShooterSq = (playerData.Position - shooter.Position).sqrMagnitude;
             bool isInBlockRange = distanceToShooterSq < 4.0f; // 2m block range, squared
             bool hasStamina = playerData.Stamina > 0.1f;
-            return isInBlockRange && playerData.CurrentAction != PlayerAction.Jumping && hasStamina;
+            return isInBlockRange && playerData.CurrentAction != PlayerAction.JumpingForShot && hasStamina;
         }
     }
 }

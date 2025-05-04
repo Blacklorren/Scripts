@@ -118,8 +118,8 @@ namespace HandballManager.Simulation.Physics
                         Vector2 responseVector = COLLISION_RESPONSE_FACTOR * overlap * separationDir;
 
                         // --- Shielding Mechanics ---
-                        bool player1Shielding = player1.CurrentAction == PlayerAction.ShieldingBall && player1.HasBall;
-                        bool player2Shielding = player2.CurrentAction == PlayerAction.ShieldingBall && player2.HasBall;
+                        bool player1Shielding = player1.CurrentAction == PlayerAction.Dribbling && player1.HasBall;
+                        bool player2Shielding = player2.CurrentAction == PlayerAction.Dribbling && player2.HasBall;
                         float shieldFactor1 = 0f, shieldFactor2 = 0f;
                         if (player1Shielding && player1.BaseData != null)
                             shieldFactor1 = player1.BaseData.GetShieldingEffectiveness();
@@ -152,8 +152,8 @@ namespace HandballManager.Simulation.Physics
                                 impulseVector *= (1f - shieldFactor1);
                             if (player2Shielding)
                                 impulseVector *= (1f - shieldFactor2);
-                            player1.Velocity -= impulseVector / p1Mass;
-                            player2.Velocity += impulseVector / p2Mass;
+                            player1.Velocity -= new Vector3((impulseVector / p1Mass).x, 0, (impulseVector / p1Mass).y);
+                            player2.Velocity += new Vector3((impulseVector / p2Mass).x, 0, (impulseVector / p2Mass).y);
                         }
                     }
 

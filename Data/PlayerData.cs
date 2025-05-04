@@ -31,6 +31,12 @@ namespace HandballManager.Data
     [Serializable]
     public class PlayerData
     {
+        // --- Basic Identification ---
+        public int PlayerID; // Already exists, confirmed from previous work
+        public string FirstName;
+        public string LastName;
+        public string FullName => $"{FirstName} {LastName}";
+
         // --- Personality Attributes (0-100) ---
         /// <summary>
         /// Player's ambition (0-100). Higher means more driven to achieve.
@@ -103,12 +109,20 @@ namespace HandballManager.Data
         /// <summary>
         /// Vision (0-100). Proxy vers BaseData.Vision. Sert à la perception des ouvertures et la réussite des passes difficiles.
         /// </summary>
-        public int Vision => BaseData?.Vision ?? 50;
+        public int Vision
+        {
+            get => BaseData?.Vision ?? 50;
+            set { if (BaseData != null) BaseData.Vision = value; }
+        }
 
         /// <summary>
         /// Creativity (0-100). Proxy vers BaseData.Creativity. Sert à modéliser l'originalité et l'imprévisibilité.
         /// </summary>
-        public int Creativity => BaseData?.Creativity ?? 50;
+        public int Creativity
+        {
+            get => BaseData?.Creativity ?? 50;
+            set { if (BaseData != null) BaseData.Creativity = value; }
+        }
 
         /// <summary>
         /// Tactical Awareness (0-100). Proxy vers BaseData.TacticalAwareness. Sert à l'évaluation tactique du joueur.
@@ -188,16 +202,7 @@ namespace HandballManager.Data
         public SquadStatus SquadStatus { get; set; } = SquadStatus.FirstTeam;
 
         // --- Identifiers ---
-        public int PlayerID { get; set; } // Or use Guid: public Guid PlayerID { get; set; } = Guid.NewGuid();
-        public string FirstName { get; set; } = "Default";
-        public string LastName { get; set; } = "Player";
-
-        /// <summary>
-        /// The player's dominant shooting hand.
-        /// </summary>
-        public Handedness ShootingHand { get; set; } = Handedness.Right;
         public string KnownAs { get; set; } // Nickname or shorter name
-        public string FullName => string.IsNullOrEmpty(KnownAs) ? $"{FirstName} {LastName}" : KnownAs; // Calculated full name
         public int Age { get; set; } = 20;
         public DateTime DateOfBirth { get; set; } = DateTime.Now.AddYears(-20); // Calculate Age from this?
         public string Nationality { get; set; } = "Unknown";
@@ -210,7 +215,7 @@ namespace HandballManager.Data
         /// <summary>
         /// Player weight in kilograms.
         /// </summary>
-        public int Weight { get; set; } = 75;
+        public float Weight { get; set; } = 75f;
 
         // --- Contract/Status ---
         public int? CurrentTeamID { get; set; } // Nullable if free agent
@@ -569,105 +574,10 @@ namespace HandballManager.Data
         private static int _nextId = 100; // Start player IDs from 100?
         public static int GetNextUniqueID() { return _nextId++; }
 
-        // --- Handball Step Tracking ---
-        public int StepCount { get; private set; } = 0;
-        public bool HasBall { get; set; } = false;
-        public bool IsDribbling { get; set; } = false;
-        /// <summary>
-        /// True si le joueur a déjà dribblé depuis la prise de possession (pour la règle de reprise de dribble)
-        /// </summary>
-        public bool HasDribbledSincePossession { get; set; } = false;
+        // --- Dynamic State (Often Set Externally, Less Intrinsic) ---
+        public int JerseyNumber { get; set; } = 0;
 
-        // --- 3-Step Rule Tracking ---
-        public UnityEngine.Vector2 LastStepPosition { get; set; } = UnityEngine.Vector2.zero;
-        public bool IsFirstStepAfterCatch { get; set; } = false;
-        public const float StepDistanceThreshold = 0.5f; // meters, adjust as needed
-
-        /// <summary>
-        /// Call this when the player gains possession of the ball.
-        /// </summary>
-        public void StartPossession(UnityEngine.Vector2 currentPosition)
-        {
-            ResetSteps();
-            LastStepPosition = currentPosition;
-            IsFirstStepAfterCatch = true;
-            // Reset dribble state ONLY on new possession for double dribble rule clarity.
-            HasDribbledSincePossession = false;
-            HasBall = true;
-        }
-
-        /// <summary>
-        /// Call this when the player loses possession of the ball.
-        /// </summary>
-        public void LosePossession()
-        {
-            ResetSteps();
-            // Reset dribble state ONLY on possession loss for double dribble rule clarity.
-            HasDribbledSincePossession = false;
-            HasBall = false;
-        }
-
-        /// <summary>
-        /// Call this when the player starts dribbling.
-        /// </summary>
-        public void StartDribble()
-        {
-            IsDribbling = true;
-            // Set HasDribbledSincePossession to true ONLY when starting a dribble. Never reset it here.
-            HasDribbledSincePossession = true;
-            ResetSteps(); // Reset step count on start of dribble
-        }
-
-        /// <summary>
-        /// Call this when the player ends dribbling.
-        /// </summary>
-        public void EndDribble()
-        {
-            IsDribbling = false;
-        }
-
-        /// <summary>
-        /// Checks and increments the step count if the player moves beyond the threshold.
-        /// Handles the 'zero step' after catch.
-        /// </summary>
-        /// <param name="currentPosition">The player's current position.</param>
-        public void TryIncrementStep(UnityEngine.Vector2 currentPosition)
-        {
-            if (HasBall && !IsDribbling)
-            {
-                float dist = UnityEngine.Vector2.Distance(currentPosition, LastStepPosition);
-                if (dist >= StepDistanceThreshold)
-                {
-                    if (IsFirstStepAfterCatch)
-                    {
-                        // Allow 'zero step' (landing after catch)
-                        IsFirstStepAfterCatch = false;
-                        LastStepPosition = currentPosition;
-                        return;
-                    }
-                    StepCount++;
-                    LastStepPosition = currentPosition;
-                }
-            }
-        }
-
-        public void ResetSteps()
-        {
-            StepCount = 0;
-            // Do NOT reset HasDribbledSincePossession here. It must only be reset explicitly on possession loss or new possession.
-            IsFirstStepAfterCatch = false;
-        }
-
-        public bool IsDoubleDribbleViolation()
-        {
-            return HasDribbledSincePossession;
-        }
-
-        public bool ExceededStepLimit()
-        {
-            return StepCount > 3;
-        }
-
+        // --- Statistics (Example - expand as needed) ---
         /// <summary>
         /// Dynamically computes the expected wage based on ability, age, potential, and last season's performance.
         /// </summary>
@@ -696,6 +606,6 @@ namespace HandballManager.Data
             // Combine factors
             return baseWage * ageFactor * potentialFactor * performanceFactor;
         }
-
-    } // End PlayerData Class
+        public Handedness PreferredHand { get; set; } = Handedness.Right;
+    }
 }

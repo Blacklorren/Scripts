@@ -21,6 +21,7 @@ namespace HandballManager.Core
     /// </summary>
     public enum PlayerPosition
     {
+        None, // Represents no specific position assigned
         Goalkeeper,
         LeftWing,
         LeftBack,

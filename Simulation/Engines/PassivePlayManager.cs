@@ -21,10 +21,18 @@ namespace HandballManager.Simulation.Engines
     public class PassivePlayManager
     {
         public bool PassivePlayWarningActive { get; private set; } = false;
-        public float AttackTimer { get; private set; } = 0f;
+        /// <summary>
+        /// Timer for intent-based passive play (resets on attacking intent)
+        /// </summary>
+        public float AttackIntentTimer { get; private set; } = 0f;
+        /// <summary>
+        /// Timer for absolute attack duration (never resets except on possession change)
+        /// </summary>
+        public float AbsoluteAttackTimer { get; private set; } = 0f;
         public int? WarningTeamSimId { get; private set; } = null;
 
-        private const float ATTACK_TIME_LIMIT = 25.0f; // 25 seconds for an attack
+        private const float ATTACK_INTENT_TIME_LIMIT = 25.0f; // 25 seconds for intent-based passive play
+        private const float ABSOLUTE_ATTACK_TIME_LIMIT = 40.0f; // 40 seconds absolute attack limit
         private const int PASSES_AFTER_WARNING_LIMIT = 4;
 
         private int _passesSinceWarning = 0;
@@ -47,20 +55,22 @@ namespace HandballManager.Simulation.Engines
         public PassivePlayStatus Update(float deltaTime)
         {
             if (_matchState == null) return PassivePlayStatus.Okay;
-            int currentPossession = _matchState.PossessionTeamId;
+            int currentPossession = _previousPossessionTeamId;
 
             // Detect change of possession
-            if (currentPossession != _previousPossessionTeamId)
+            if (_matchState.PossessionTeamId != _previousPossessionTeamId)
             {
                 ResetAll();
-                _previousPossessionTeamId = currentPossession;
+                _previousPossessionTeamId = _matchState.PossessionTeamId;
                 return PassivePlayStatus.Okay;
             }
 
             if (!PassivePlayWarningActive)
             {
-                AttackTimer += deltaTime;
-                if (AttackTimer >= ATTACK_TIME_LIMIT)
+                AttackIntentTimer += deltaTime;
+                AbsoluteAttackTimer += deltaTime;
+                // Trigger warning if either timer exceeds its threshold
+                if (AttackIntentTimer >= ATTACK_INTENT_TIME_LIMIT || AbsoluteAttackTimer >= ABSOLUTE_ATTACK_TIME_LIMIT)
                 {
                     TriggerPassivePlayWarning(_matchState.PossessionTeamId);
                     return PassivePlayStatus.WarningTriggered;
@@ -90,7 +100,7 @@ namespace HandballManager.Simulation.Engines
         /// </summary>
         public void ResetAttackTimer()
         {
-            AttackTimer = 0f;
+            AttackIntentTimer = 0f;
             if (PassivePlayWarningActive)
                 ResetAll();
         }
@@ -98,7 +108,8 @@ namespace HandballManager.Simulation.Engines
         private void ResetAll()
         {
             PassivePlayWarningActive = false;
-            AttackTimer = 0f;
+            AttackIntentTimer = 0f;
+            AbsoluteAttackTimer = 0f;
             WarningTeamSimId = null;
             _passesSinceWarning = 0;
         }
@@ -121,6 +132,20 @@ namespace HandballManager.Simulation.Engines
         public void ResetPassivePlay()
         {
             ResetAll();
+        }
+        /// <summary>
+        /// Call this when attacking intent is clearly demonstrated (e.g., movement towards goal).
+        /// Resets the attack timer and warning if active.
+        /// </summary>
+        /// <summary>
+        /// Call this when attacking intent is clearly demonstrated (e.g., movement towards goal).
+        /// Resets only the intent-based timer (not the absolute timer).
+        /// </summary>
+        public void NotifyAttackingIntent()
+        {
+            AttackIntentTimer = 0f;
+            if (PassivePlayWarningActive)
+                ResetAll();
         }
     }
 }

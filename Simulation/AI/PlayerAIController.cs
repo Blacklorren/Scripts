@@ -1,4 +1,5 @@
 using UnityEngine;
+using Zenject; // Added for InjectAttribute
 
 using HandballManager.Gameplay;
 using HandballManager.Data;
@@ -20,10 +21,10 @@ namespace HandballManager.Simulation.AI
     /// </summary>
     public class PlayerAIController : IPlayerAIController 
     {
-        // --- Pour l'intégration IA des remplacements tactiques ---
+        // --- For AI integration of tactical substitutions ---
         private MatchSimulator _matchSimulator;
         /// <summary>
-        /// Setter public pour injection du simulateur de match (nécessaire à l'IA pour déclencher les remplacements).
+        /// Public setter for injecting the match simulator (necessary for AI to trigger substitutions).
         /// </summary>
         public void SetMatchSimulator(MatchSimulator simulator)
         {
@@ -52,72 +53,155 @@ namespace HandballManager.Simulation.AI
         private const float LOOSE_BALL_REACTION_RANGE_MULTIPLIER = 1.8f;
         private const float ARRIVAL_VELOCITY_DAMPING_FACTOR = 0.5f;
         private const float PREP_VELOCITY_DAMPING_FACTOR = 0.1f;
-        private const float MIN_ACTION_TIMER = 0.5f; // Plus réaliste : 500 ms pour simuler la prise de décision humaine
+        private const float MIN_ACTION_TIMER = 0.5f; // More realistic: 500 ms to simulate human decision-making time
 
-        // Score Adjustment Factors (Magic Number replacements)
-        private const float DRIBBLING_RISK_ADJUSTMENT = 0.9f;
-        private const float PASS_SAFETY_ADJUSTMENT = 0.9f; // Factor applied when dividing pass score by risk (>1 means less likely)
-        private const float PASS_SAFETY_MIN_DIVISOR = 0.1f; // Minimum divisor for pass score adjustment
-
-        // --- Phase-specific Offensive Modifiers ---
-        // Transition (fast break) phase multipliers
-        private const float TRANSITION_DRIBBLE_MODIFIER = 1.3f; // Encourage direct dribbling
-        private const float TRANSITION_PASS_MODIFIER = 1.15f;    // Encourage direct forward passes
-        private const float TRANSITION_SHOOT_MODIFIER = 1.15f;   // Encourage quick shots
-        private const float TRANSITION_COMPLEX_PASS_MODIFIER = 0.8f; // Deprioritize complex passes
-        private const float TRANSITION_SCREEN_MODIFIER = 0.8f;   // Deprioritize screens during fast break
-        private const float TRANSITION_PREP_TIME_FACTOR = 0.85f; // Faster prep for shot/pass
-        private const float TRANSITION_ACTION_THRESHOLD_FACTOR = 0.85f; // Lower threshold to act quickly
-
-        // Positional attack phase multipliers
-        private const float POSITIONAL_SCREEN_MODIFIER = 1.15f;  // Encourage tactical screens
-        private const float POSITIONAL_FORMATION_PASS_MODIFIER = 1.1f; // Encourage formation-maintaining passes
+        // --- Timeout management ---
+        private const float TIMEOUT_TRIGGER_THRESHOLD = 0.9f; // Threshold for triggering a timeout
+        private const float TIMEOUT_COOLDOWN_SECONDS = 30f; // Cooldown time between timeouts
         #endregion
 
         #region Dependencies (Injected)
         private readonly ITacticPositioner _tacticPositioner;
         private readonly IGoalkeeperPositioner _gkPositioner;
-        private readonly IPassingDecisionMaker _passDecisionMaker;
-        private readonly IShootingDecisionMaker _shootDecisionMaker;
-        private readonly IDribblingDecisionMaker _dribbleDecisionMaker;
-        private readonly IDefensiveDecisionMaker _defenseDecisionMaker;
+        private readonly IGeometryProvider _geometry;
+        // Removed unused decision makers
         private readonly ITacticalEvaluator _tacticalEvaluator;
         private readonly IPersonalityEvaluator _personalityEvaluator;
         private readonly IGameStateEvaluator _gameStateEvaluator;
         private readonly IBallPhysicsCalculator _ballPhysics;
-        private readonly IOffensiveDecisionMaker _offensiveDecisionMaker;
+        // IOffensiveDecisionMaker removed - Logic moved to OffensiveAIController
+        // Injected role-specific controllers
+        private readonly IOffensiveAIController _offensiveAIController;
+        private readonly IDefensiveAIController _defensiveAIController; // Keep this for now if still used elsewhere, or remove if fully replaced
+        private readonly IGoalkeeperAIController _goalkeeperAIController;
+        private readonly JumpSimulator _jumpSimulator; // Added dependency for jump decisions
         #endregion
 
         #region Constructor
+        [Inject]
         public PlayerAIController(
-            TacticPositioner tacticPositioner,
+            ITacticPositioner tacticPositioner, // Use interface type
             IGoalkeeperPositioner gkPositioner,
-            IPassingDecisionMaker passDecisionMaker,
-            IShootingDecisionMaker shootDecisionMaker,
-            IDribblingDecisionMaker dribbleDecisionMaker,
-            IDefensiveDecisionMaker defenseDecisionMaker,
+            IGeometryProvider geometry,
+            // Removed unused decision makers
             ITacticalEvaluator tacticalEvaluator,
             IPersonalityEvaluator personalityEvaluator,
             IGameStateEvaluator gameStateEvaluator,
             IBallPhysicsCalculator ballPhysics,
-            IOffensiveDecisionMaker offensiveDecisionMaker)
+            // IOffensiveDecisionMaker removed
+            // Inject new controllers
+            IOffensiveAIController offensiveAIController,
+            IDefensiveAIController defensiveAIController, // Keep param if needed
+            IGoalkeeperAIController goalkeeperAIController,
+            JumpSimulator jumpSimulator // Added parameter for jump simulator
+            )
         {
-            // Null checks for all dependencies ensure they are provided
-            _tacticPositioner = tacticPositioner ?? throw new ArgumentNullException(nameof(tacticPositioner));
-            _gkPositioner = gkPositioner ?? throw new ArgumentNullException(nameof(gkPositioner));
-            _passDecisionMaker = passDecisionMaker ?? throw new ArgumentNullException(nameof(passDecisionMaker));
-            _shootDecisionMaker = shootDecisionMaker ?? throw new ArgumentNullException(nameof(shootDecisionMaker));
-            _dribbleDecisionMaker = dribbleDecisionMaker ?? throw new ArgumentNullException(nameof(dribbleDecisionMaker));
-            _defenseDecisionMaker = defenseDecisionMaker ?? throw new ArgumentNullException(nameof(defenseDecisionMaker));
-            _tacticalEvaluator = tacticalEvaluator ?? throw new ArgumentNullException(nameof(tacticalEvaluator));
-            _personalityEvaluator = personalityEvaluator ?? throw new ArgumentNullException(nameof(personalityEvaluator));
-            _gameStateEvaluator = gameStateEvaluator ?? throw new ArgumentNullException(nameof(gameStateEvaluator));
-            _ballPhysics = ballPhysics ?? throw new ArgumentNullException(nameof(ballPhysics));
-            _offensiveDecisionMaker = offensiveDecisionMaker ?? throw new ArgumentNullException(nameof(offensiveDecisionMaker));
+            _tacticPositioner = tacticPositioner;
+            _gkPositioner = gkPositioner;
+            _geometry = geometry;
+            // Removed assignments for unused decision makers
+            _tacticalEvaluator = tacticalEvaluator;
+            _personalityEvaluator = personalityEvaluator;
+            _gameStateEvaluator = gameStateEvaluator;
+            _ballPhysics = ballPhysics;
+            // _offensiveDecisionMaker assignment removed
+
+            // Assign new controllers
+            _offensiveAIController = offensiveAIController;
+            _defensiveAIController = defensiveAIController; // Keep assignment if needed
+            _goalkeeperAIController = goalkeeperAIController;
+            _jumpSimulator = jumpSimulator; // Initialize jump simulator
+
+            Debug.Log("PlayerAIController initialized with role-specific controllers.");
         }
         #endregion
 
         #region Public Methods
+
+        /// <summary>
+        /// Returns the base preparation time for a given player action.
+        /// </summary>
+        private float GetPrepTime(PlayerAction action)
+        {
+            switch (action)
+            {
+                case PlayerAction.Shooting:
+                    return SHOT_PREP_TIME_BASE;
+                case PlayerAction.Passing:
+                    return PASS_PREP_TIME_BASE;
+
+                case PlayerAction.Tackling:
+                    return TACKLE_PREP_TIME;
+                default:
+                    return MIN_ACTION_TIMER;
+            }
+        }
+
+        /// <summary>
+        /// Returns the randomization factor for the preparation time of a given player action.
+        /// </summary>
+        private float GetPrepTimeRandomFactor(PlayerAction action)
+        {
+            switch (action)
+            {
+                case PlayerAction.Shooting:
+                    return SHOT_PREP_TIME_RANDOM_FACTOR;
+                case PlayerAction.Passing:
+                    return PASS_PREP_TIME_RANDOM_FACTOR;
+
+                default:
+                    return 0f;
+            }
+        }
+
+        /// <summary>
+        /// Returns true if the given action can be interrupted by a new decision.
+        /// </summary>
+        private bool IsInterruptible(PlayerAction action)
+        {
+            switch (action)
+            {
+                case PlayerAction.Idle:
+                case PlayerAction.MovingToPosition:
+                case PlayerAction.MovingWithBall:
+                case PlayerAction.ReceivingPass:
+                case PlayerAction.DefendingPlayer:
+                case PlayerAction.WaitingForPass:
+                case PlayerAction.ReturningToDefense:
+                    return true; // Interruptible actions
+                case PlayerAction.Shooting:
+                case PlayerAction.Passing:
+                case PlayerAction.Tackling:
+                case PlayerAction.JumpingForShot:
+                case PlayerAction.Landing:
+                case PlayerAction.Blocking:
+                case PlayerAction.Intercepting:
+                case PlayerAction.CelebratingGoal:
+                case PlayerAction.ArguingWithRef:
+                    return false; // Not interruptible
+                default:
+                    return true; // Default to interruptible
+            }
+        }
+
+        /// <summary>
+        /// Decides the action for a goalkeeper based on the match state and tactic.
+        /// </summary>
+        private void DecideGoalkeeperAction(SimPlayer player, MatchState state, Tactic tactic, bool hasBall)
+        {
+            if (_goalkeeperAIController != null)
+            {
+                // Delegate to the injected goalkeeper AI controller
+                PlayerAction action = _goalkeeperAIController.DetermineGoalkeeperAction(state, player);
+                SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+            }
+            else
+            {
+                // Fallback: just idle if no controller
+                SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+            }
+        }
+
         /// <summary>
         /// Updates decisions for all players currently on the court. Iterates a copy for safety.
         /// </summary>
@@ -134,10 +218,10 @@ namespace HandballManager.Simulation.AI
                 return;
             }
 
-            // --- AJOUT IA : gestion des remplacements tactiques ---
+            // --- AI ADDITION: Tactical substitution management ---
             EvaluateAndPerformSubstitutions(state);
 
-            // --- AJOUT IA : gestion des timeouts ---
+            // --- AI ADDITION: Timeout management ---
             TryTriggerTimeoutIfNeeded(state);
 
             float currentTime = Time.time;
@@ -153,13 +237,81 @@ namespace HandballManager.Simulation.AI
 
                     Tactic tactic = (player.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
 
-                    if (player.HasBall)
+                    // --- Fatigue Check for AI Decision Penalty ---
+                    float stamina = player.Stamina;
+                    float aiFatigueThreshold = 0.25f; // Penalty applies below 25% stamina
+                    float maxAIFatiguePenalty = 0.15f; // Max 15% reduction in effectiveness scores
+                    float aiFatiguePenaltyFactor = 1.0f; // Default: no penalty
+                    if (stamina < aiFatigueThreshold)
                     {
-                        DecidePlayerAction(player, state, tactic); // Calls DecideOffensiveAction internally
+                        // Non-linear scaling: penalty increases as stamina drops further below threshold
+                        aiFatiguePenaltyFactor = 1.0f - (Mathf.Pow((aiFatigueThreshold - stamina) / aiFatigueThreshold, 1.5f) * maxAIFatiguePenalty);
                     }
-                    else
+                    // NOTE: This aiFatiguePenaltyFactor (value between ~0.85 and 1.0) should be multiplied
+                    // with scores derived from mental attributes (like DecisionMaking, Concentration)
+                    // within the specific decision-making logic (e.g., inside Offensive/Defensive/GK controllers
+                    // or evaluators) where those attributes are used. Applying it globally here is less targeted.
+                    // For now, we'll log it as a placeholder for where it *could* be applied.
+                    // Example usage (inside a specific decision logic):
+                    // float decisionScore = CalculateDecisionScore(player.BaseData.DecisionMaking * aiFatiguePenaltyFactor, ...);
+
+                    // --- Handle Specific Game Phases First ---
+                    switch (state.CurrentPhase)
                     {
-                        DecideOffBallAction(player, state, tactic);
+                        case GamePhase.HomeSetPiece:
+                        case GamePhase.AwaySetPiece:
+                            // Offensive players handle set pieces (shooter/passer)
+                            if (player.HasBall && _offensiveAIController != null)
+                            {
+                                var (action, target) = _offensiveAIController.HandleSetPieceAction(state, player, tactic);
+                                SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+                                player.TargetPlayer = target; // Set target if passing
+                            }
+                            else // Other players (including defenders) just position
+                            {
+                                SetPlayerToMoveToTacticalPosition(player, state, tactic);
+                                player.PlannedAction = PlayerAction.MovingToPosition;
+                            }
+                            // Update LookDirection and schedule next update even if action decided here
+                            SimulationUtils.UpdateLookDirectionToBallOrOpponent(player, state);
+                            _aiUpdateScheduler.ScheduleNextUpdate(player, state, currentTime);
+                            continue; // Skip general logic for this player
+
+                        case GamePhase.HomePenalty:
+                        case GamePhase.AwayPenalty:
+                            int takerId = tactic?.PrimaryPenaltyTakerPlayerID ?? -1;
+                            bool isTaker = player.GetPlayerId() == takerId || player.HasBall; // Fallback if taker ID is missing
+                            bool isGk = player.AssignedTacticalRole == PlayerPosition.Goalkeeper;
+
+                            if (isTaker && _offensiveAIController != null)
+                            {
+                                PlayerAction action = _offensiveAIController.HandlePenaltyAction(state, player);
+                                SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+                            }
+                            else if (isGk && _goalkeeperAIController != null)
+                            {
+                                PlayerAction action = _goalkeeperAIController.HandlePenaltySaveAction(state, player);
+                                SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+                            }
+                            else // Other players are idle during penalty
+                            {
+                                SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+                            }
+                            // Update LookDirection and schedule next update even if action decided here
+                            SimulationUtils.UpdateLookDirectionToBallOrOpponent(player, state);
+                            _aiUpdateScheduler.ScheduleNextUpdate(player, state, currentTime);
+                            continue; // Skip general logic for this player
+                    }
+                    // --- End Specific Game Phases ---
+
+                    DecidePlayerAction(player, state, tactic); // Calls DecideOffensiveAction internally
+
+                    // --- Loose ball pursuit: Only the closest player to the loose ball will chase it ---
+                    if (state.Ball != null && state.Ball.IsLoose && player.PlannedAction == PlayerAction.MovingToPosition && IsClosestToLooseBall(player, state))
+                    {
+                        // Set the target position to the ball position for the closest player
+                        // Convert 3D ball position (x,y,z) to 2D ground position (x,z) to match player's 2D position (x,y)
+                        player.TargetPosition = new Vector2(state.Ball.Position.x, state.Ball.Position.z);
                     }
 
                     // Update LookDirection to face ball or nearest opponent
@@ -219,8 +371,8 @@ namespace HandballManager.Simulation.AI
         }
 
         /// <summary>
-        /// Analyse l'état du match et déclenche un remplacement tactique si nécessaire (IA).
-        /// Critère : si un joueur sur le terrain a une fatigue > 0.9 et qu'un remplaçant frais (<0.5) est dispo sur le banc.
+        /// Analyzes the match state and triggers a tactical substitution if necessary (AI).
+        /// Criteria: Checks for low stamina, injury, or poor performance based on recent stats.
         /// </summary>
         // --- Substitution Cooldown State ---
         private float _lastSubstitutionTimeHome = -999f;
@@ -241,7 +393,7 @@ namespace HandballManager.Simulation.AI
                     if (playerOut == null || playerOut.IsSuspended() || !playerOut.IsOnCourt)
                         continue;
 
-                    // --- Substitution Criteria ---
+                    // --- Substitution Criteria (Mirrors Away Team Logic) ---
                     bool needsSub = false;
                     // 1. Stamina
                     if (playerOut.Stamina < 0.1f)
@@ -249,9 +401,13 @@ namespace HandballManager.Simulation.AI
                     // 2. Injury
                     else if (playerOut.BaseData != null && playerOut.BaseData.IsInjured(state.MatchDate))
                         needsSub = true;
-                    // 3. Performance (example: very low current ability, could be replaced with match rating)
-                    else if (playerOut.BaseData != null && playerOut.BaseData.CurrentAbility < 30) // Threshold can be tuned
-                        needsSub = true;
+                    // 3. Performance (Based on recent stats)
+                    else if (playerOut.BaseData != null && state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
+                    {
+                        int missedShots = stats.ShotsTaken - stats.ShotsOnTarget;
+                        if (missedShots >= 3 || stats.Turnovers >= 2 || stats.FoulsCommitted >= 3)
+                            needsSub = true;
+                    }
                     // 4. Tactical (placeholder: e.g., role mismatch)
                     // TODO: Integrate tactical evaluator for smarter checks
 
@@ -272,17 +428,13 @@ namespace HandballManager.Simulation.AI
 
                     if (candidate != null)
                     {
+                        // Assign the specific formation role from the outgoing player to the incoming one
+                        candidate.AssignedFormationSlotRole = playerOut.AssignedFormationSlotRole;
+
                         if (_matchSimulator.TrySubstitute(playerOut, candidate))
                         {
                             _lastSubstitutionTimeHome = now;
-                            // Reset negative performance stats for the player who just left
-                            if (state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
-                            {
-                                stats.Turnovers = 0;
-                                stats.ShotsTaken = 0;
-                                stats.ShotsOnTarget = 0;
-                                stats.FoulsCommitted = 0;
-                            }
+                            // Stats are NOT reset upon substitution
                             break; // Only one sub per tick per team
                         }
                     }
@@ -326,900 +478,481 @@ namespace HandballManager.Simulation.AI
 
                     if (candidate != null)
                     {
+                        // Assign the specific formation role from the outgoing player to the incoming one
+                        candidate.AssignedFormationSlotRole = playerOut.AssignedFormationSlotRole;
+
                         if (_matchSimulator.TrySubstitute(playerOut, candidate))
                         {
                             _lastSubstitutionTimeAway = now;
-                            // Reset negative performance stats for the player who just left
-                            if (state.PlayerStats.TryGetValue(playerOut.GetPlayerId(), out var stats))
-                            {
-                                stats.Turnovers = 0;
-                                stats.ShotsTaken = 0;
-                                stats.ShotsOnTarget = 0;
-                                stats.FoulsCommitted = 0;
-                            }
+                            // Stats are NOT reset upon substitution
                             break;
                         }
                     }
                 }
             }
         }
-
-        /// <summary>Decides the best off-ball action (including setting screens) for a player without the ball.</summary>
-        private void DecideOffBallAction(SimPlayer player, MatchState state, Tactic tactic)
-        {
-            if (player?.BaseData == null || state == null || tactic == null) return;
-            if (player.HasBall) return; // Defensive: Only off-ball
-
-            // --- Filtre : seuls le pivot et les ailiers peuvent poser un écran ---
-            var pos = player.BaseData.PrimaryPosition;
-            if (pos != PlayerPosition.Pivot && pos != PlayerPosition.LeftWing && pos != PlayerPosition.RightWing)
-            {
-                // Les autres postes ne posent pas d'écran, déplacement tactique off-ball
-                SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                return;
-            }
-
-            // Evaluate screen opportunity
-            var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
-            var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
-            if (screenOpportunity != null)
-            {
-                float phaseScreenModifier = 1f;
-                bool isAttacking = player.TeamSimId == state.PossessionTeamId;
-                switch (state.CurrentPhase)
-                {
-                    case GamePhase.HomeAttack:
-                    case GamePhase.AwayAttack:
-                        phaseScreenModifier = isAttacking ? 1.0f : 0.5f; // Normal en attaque, rare en défense
-                        break;
-                    case GamePhase.TransitionToHomeAttack:
-                    case GamePhase.TransitionToAwayAttack:
-                        phaseScreenModifier = isAttacking ? 0.8f : 0.3f; // Moins fréquent en transition
-                        break;
-                    case GamePhase.HomeSetPiece:
-                    case GamePhase.AwaySetPiece:
-                    case GamePhase.HomePenalty:
-                    case GamePhase.AwayPenalty:
-                        phaseScreenModifier = isAttacking ? 1.2f : 0.2f; // Très rare en défense sur set play
-                        break;
-                    default:
-                        phaseScreenModifier = isAttacking ? 0.5f : 0.1f; // Défense = quasi jamais de screen
-                        break;
-                }
-                screenOpportunity.Confidence *= phaseScreenModifier;
-            }
-            if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
-            {
-                // Use new ScreenDecisionData for screen positioning
-                if (screenOpportunity.Data is ScreenDecisionData screenData)
-                {
-                    player.TargetPlayer = screenData.User;
-                    player.TargetPosition = screenData.ScreenSpot;
-                }
-                else
-                {
-                    player.TargetPlayer = screenOpportunity.Data as SimPlayer;
-                }
-                player.PlannedAction = PlayerAction.SettingScreen;
-                SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state); // No prep time for screen (can adjust)
-                return;
-            }
-
-            // Default: move to tactical position
-            SetPlayerToMoveToTacticalPosition(player, state, tactic);
-        }
-
-        /// <summary>Determines the best action for a specific player based on the current game state.</summary>
-        /// <param name="state">The current match state.</param>
-        /// <param name="player">The player to make a decision for.</param>
-        /// <returns>The action the player should take.</returns>
-        public PlayerAction DeterminePlayerAction(MatchState state, PlayerData player)
-        {
-            // Validation des paramètres
-            if (state == null || player == null)
-            {
-                Debug.LogWarning("[PlayerAIController] DeterminePlayerAction called with null state or player.");
-                return PlayerAction.Idle;
-            }
-
-            // Find the SimPlayer corresponding to this PlayerData
-            SimPlayer simPlayer = state.PlayersOnCourt.FirstOrDefault(p => p.GetPlayerId() == player.PlayerID);
-            if (simPlayer == null)
-            {
-                // Essayer de trouver le joueur dans AllPlayers si pas trouvé sur le terrain
-                if (state.AllPlayers.TryGetValue(player.PlayerID, out simPlayer))
-                {
-                    if (!simPlayer.IsOnCourt)
-                    {
-                        // Le joueur existe mais n'est pas sur le terrain
-                        return PlayerAction.Idle;
-                    }
-                }
-                else
-                {
-                    // Joueur non trouvé du tout
-                    Debug.LogWarning($"[PlayerAIController] Player {player.PlayerID} not found in match state.");
-                    return PlayerAction.Idle;
-                }
-            }
-
-            // Get the appropriate tactic
-            Tactic tactic = (simPlayer.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
-            
-            // Use the existing decision logic
-            DecidePlayerAction(simPlayer, state, tactic);
-            
-            // Return the action that was decided
-            return simPlayer.CurrentAction;
-        }
         #endregion
-
-        #region Core Decision Logic
-        /// <summary>Core decision logic router for a single player. Delegates specific evaluations
-        /// to specialized components and sets the player's intended action.
-        /// </summary>
-        /// <param name="player">The player making the decision.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The player's team tactic (can be null, handled gracefully).</param>
+        #region Private Decision Logic
+        /// <summary>Decides the primary action for a player based on their role and ball possession.</summary>
         private void DecidePlayerAction(SimPlayer player, MatchState state, Tactic tactic)
         {
-            // Ensure player, essential data, and state are valid
-            if (player?.BaseData == null || state == null)
+            if (player == null || state == null || tactic == null) return;
+
+            // --- Phase-Specific Overrides --- 
+            if (player.ActionTimer > 0 && !IsInterruptible(player.PlannedAction))
             {
-                 Debug.LogWarning($"[PlayerAIController] DecidePlayerAction skipped: Null player, BaseData, or state for PlayerID: {player?.GetPlayerId() ?? -1}.");
-                 return;
+                return; // Don't interrupt non-interruptible actions
             }
 
-             // Gracefully handle null tactic by using a default instance
-             if (tactic == null)
+            switch (state.CurrentPhase)
+            {
+                case GamePhase.HomePenalty:
+                case GamePhase.AwayPenalty:
+                    DecidePenaltyAction(player, state); // Restore call, remove tactic arg if DecidePenaltyAction doesn't need it
+                    return; // Handled by penalty logic
+
+                case GamePhase.HomeSetPiece:
+                case GamePhase.AwaySetPiece:
+                    DecideSetPieceAction(player, state, tactic); // Restore call
+                    return; // Handled by set piece logic
+            }
+
+            // --- Default Action Logic (based on ball possession/role) ---
+            bool hasBall = state.Ball.Holder?.PlayerID == player.PlayerID;
+
+            // Goalkeeper Logic - Restore call to helper
+            if (player.BaseData.PrimaryPosition == PlayerPosition.Goalkeeper) // Use BaseData.PrimaryPosition for role check
+            {
+                DecideGoalkeeperAction(player, state, tactic, hasBall);
+            }
+            // Field Player Logic
+            else
+            {
+                if (hasBall)
+                {
+                    DecideOffensiveAction(player, state, tactic); // Restore call
+                }
+                else
+                {
+                    DecideOffBallAction(player, state, tactic); // Restore call
+                }
+            }
+        }
+
+        /// <summary>Decides player actions during a penalty phase.</summary>
+        private Vector2 ChoosePenaltyShotTarget(SimPlayer shooter, SimPlayer goalkeeper, MatchState state)
+        {
+            // Simple logic: aim for the center of the goal, slightly offset based on handedness
+            // (Assumes goal is at positive X for Away, negative X for Home)
+            var pitch = _geometry; // Use injected geometry provider
+            float goalY = 0f; // Center
+            float goalX;
+            if (shooter.TeamId == 0) // Home team shoots right
+                goalX = pitch?.AwayGoalCenter3D.x ?? 20f;
+            else
+                goalX = pitch?.HomeGoalCenter3D.x ?? -20f;
+
+            float offset = 0.7f; // Offset for handedness
+            if (shooter.BaseData.PreferredHand == Handedness.Left)
+                goalY += offset;
+            else if (shooter.BaseData.PreferredHand == Handedness.Right)
+                goalY -= offset;
+            // Otherwise, center
+            return new Vector2(goalX, goalY);
+        }
+
+        /// <summary>
+        /// Determines the dive target for the goalkeeper during a penalty.
+        /// Simple logic: randomly choose left, center, or right, or bias based on shooter's handedness if available.
+        /// </summary>
+        private Vector2 ChoosePenaltyDiveTarget(SimPlayer goalkeeper, SimPlayer shooter, MatchState state)
+        {
+            var pitch = _geometry;
+            float goalX = (goalkeeper.TeamId == 0) ? pitch?.HomeGoalCenter3D.x ?? -20f : pitch?.AwayGoalCenter3D.x ?? 20f;
+            float[] yOffsets = { -1.0f, 0f, 1.0f }; // left, center, right (relative to goal center)
+            float goalY = 0f;
+
+            // Bias: If shooter is left-handed, GK might favor diving to GK's left (goal's right)
+            int bias = 1; // 0=left, 1=center, 2=right
+            if (shooter != null && shooter.BaseData != null)
+            {
+                if (shooter.BaseData.PreferredHand == Handedness.Left)
+                    bias = 2; // right
+                else if (shooter.BaseData.PreferredHand == Handedness.Right)
+                    bias = 0; // left
+                else
+                    bias = 1; // center
+            }
+            // Add randomness
+            int diveChoice = UnityEngine.Random.value < 0.5f ? bias : UnityEngine.Random.Range(0, 3);
+            goalY = yOffsets[diveChoice];
+            // Scale Y offset to match goal width (assume 3m width, adjust as needed)
+            float goalWidth = pitch?.GoalWidth ?? 3f;
+            goalY = (pitch != null ? ((goalkeeper.TeamId == 0 ? pitch.HomeGoalCenter3D.y : pitch.AwayGoalCenter3D.y) + goalY * (goalWidth / 2f * 0.85f)) : goalY * 1.2f);
+            return new Vector2(goalX, goalY);
+        }
+
+        private void DecidePenaltyAction(SimPlayer player, MatchState state)
+        {
+             SimPlayer shooter = state.AllPlayers.Values.FirstOrDefault(p => p != null && p.HasBall);
+bool isShooter = shooter != null && shooter.PlayerID == player.PlayerID;
+             bool isGoalkeeper = player.BaseData.PrimaryPosition == PlayerPosition.Goalkeeper; // Check role
+
+             if (isShooter)
              {
-                  tactic = Tactic.Default; // Assuming a static Default Tactic exists
-                  Debug.LogWarning($"[PlayerAIController] Using default tactic for player {player.GetPlayerId()} due to null tactic provided.");
+                  // Shooter Logic: Choose target and prepare shot
+                  SimPlayer opponentGk = state.GetGoalkeeper(player.TeamId == 0 ? 1 : 0);
+                  Vector2 targetGoalPos = ChoosePenaltyShotTarget(player, opponentGk, state); // Assuming ChoosePenaltyShotTarget exists
+                  SetPlayerAction(player, PlayerAction.PreparingShot, GetPrepTime(PlayerAction.Shooting), GetPrepTimeRandomFactor(PlayerAction.Shooting), state, targetGoalPos);
+             }
+             else if (isGoalkeeper)
+             {
+                 // Goalkeeper Logic: Use the controller
+                 if (_goalkeeperAIController != null)
+                 {
+                     // Pass SimPlayer to HandlePenaltySaveAction
+                     PlayerAction gkAction = _goalkeeperAIController.HandlePenaltySaveAction(state, player);
+                     Vector2 diveTarget = ChoosePenaltyDiveTarget(player, shooter, state); // Pass shooter SimPlayer if available
+                     SetPlayerAction(player, gkAction, 0f, 0f, state, diveTarget); // Immediate action for save
+                 }
+                 else
+                 {
+                     Debug.LogWarning($"[PlayerAIController] GoalkeeperAIController not injected for {player.BaseData?.FullName} during penalty.");
+                     SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state); // Fallback
+                 }
+             }
+             else
+             {
+                  // Other players: Idle
+                  SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+             }
+        }
+
+        private void DecideSetPieceAction(SimPlayer player, MatchState state, Tactic tactic)
+        {
+             // Logic based on version after SimPlayer update but before corruption
+             bool isHomeSetPiece = state.CurrentPhase == GamePhase.HomeSetPiece;
+             bool playerIsOnAttackingTeam = (isHomeSetPiece && player.TeamId == 0) || (!isHomeSetPiece && player.TeamId == 1);
+
+             SimPlayer thrower = state.Ball.Holder;
+             if (thrower == null) {
+                 if (player.PlannedAction != PlayerAction.Idle)
+                    SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+                 return;
              }
 
-            // --- Pre-Checks & State Persistence ---
-            if (ShouldSkipDecision(player, state)) return; // Check suspension, active timers, receiving pass etc.
+             if (player == thrower)
+             {
+                 // Thrower Logic: Use Offensive AI Controller
+                 if (_offensiveAIController != null && player.PlannedAction != PlayerAction.PreparingShot && player.PlannedAction != PlayerAction.Shooting &&
+                     player.PlannedAction != PlayerAction.PreparingPass && player.PlannedAction != PlayerAction.Passing)
+                 {
+                    // Delegate decision entirely to the Offensive controller
+                    var (action, targetPlayer) = _offensiveAIController.HandleSetPieceAction(state, player, tactic);
+                    SetPlayerAction(player, action, MIN_ACTION_TIMER, 0f, state);
+                    Debug.Log($"[AI SetPiece] Thrower {player.BaseData?.FullName} decided action: {action}");
+                 }
+                 else if (_offensiveAIController == null)
+                 {
+                    Debug.LogWarning("[PlayerAIController] OffensiveAIController not injected for set piece thrower.");
+                    SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state); // Fallback
+                 }
+             }
+             else if (!playerIsOnAttackingTeam && player.BaseData.PrimaryPosition != PlayerPosition.Goalkeeper) // Use BaseData for role
+             {
+                 // Defender Logic: Attempt block or position
+                 if (_defensiveAIController != null)
+                 {
+                    // Let defensive controller handle block/positioning decision
+                    PlayerAction defensiveAction = _defensiveAIController.DetermineDefensiveAction(state, player, tactic); // Pass SimPlayer
+                    Vector2 targetPosition = _defensiveAIController.CalculateDefensivePosition(state, player, tactic); // Pass SimPlayer
 
-            // --- Determine Basic Game Context ---
-            bool isOwnTeamPossession = player.TeamSimId == state.PossessionTeamId && state.PossessionTeamId != -1;
-            bool hasBall = player.HasBall;
-
-            // --- Action Decision Branching ---
-            if (player.AssignedTacticalRole == PlayerPosition.Goalkeeper)
-            {
-                DecideGoalkeeperAction(player, state, tactic);
-            }
-            else // Field Player Decisions
-            {
-                // 1. Immediate Reactions (e.g., chase nearby loose ball)
-                if (TryHandleReactions(player, state)) return;
-
-                // 2. Standard Phase Actions (Offense / Defense)
-                if (isOwnTeamPossession)
-                {
-                    DecideOffensiveAction(player, state, tactic, hasBall);
-                }
-                else // Opponent possession or ball is loose further away
-                {
-                    DecideDefensiveAction(player, state, tactic);
-                }
-            }
-
-            // --- Fallback Positioning (If no specific action decided or needed) ---
-            ApplyFallbackPositioning(player, state, tactic);
-            // --- IA spécifique pour coups francs et penalties ---
-            HandleSetPieceAndPenaltyPhases(player, state, tactic);
-        }
-        #endregion
-
-        #region Decision Sub-Logic
-        /// <summary>Checks conditions where AI decision should be skipped for this step.</summary>
-        /// <param name="player">The player being checked.</param>
-        /// <param name="state">The current match state.</param>
-        /// <returns>True if the decision logic should be skipped, false otherwise.</returns>
-        private bool ShouldSkipDecision(SimPlayer player, MatchState state)
-        {
-            // Cannot decide if suspended
-            if (player.SuspensionTimer > 0) { player.CurrentAction = PlayerAction.Suspended; player.TargetPosition = player.Position; player.TargetPlayer = null; return true; }
-
-            // Cannot decide if preparing/executing an action
-            if (player.ActionTimer > 0) { return true; }
-
-            // Persist receiving state if the intended pass is still in flight towards this player
-            if (player.CurrentAction == PlayerAction.ReceivingPass && state.Ball.IsInFlight && state.Ball.IntendedTarget == player)
-            {
-                // Update target position based on where the ball is predicted to go
-                player.TargetPosition = _ballPhysics.EstimatePassInterceptPoint(state.Ball, player);
-                return true; // Continue receiving
-            }
-
-            // Persist intercept attempt state while ball is in flight
-            if (player.CurrentAction == PlayerAction.AttemptingIntercept && state.Ball.IsInFlight)
-            {
-                // Re-evaluate intercept viability or simply update target? Updating target is simpler for now.
-                player.TargetPosition = _ballPhysics.EstimatePassInterceptPoint(state.Ball, player);
-                return true; // Continue intercept attempt
-            }
-
-            // State cleanup: Clear target player if not actively marking or tackling
-            if (player.CurrentAction != PlayerAction.MarkingPlayer && player.CurrentAction != PlayerAction.AttemptingTackle)
-            {
-                player.TargetPlayer = null;
-            }
-
-            // No reason to skip
-            return false;
-        }
-
-        /// <summary>Handles simple, immediate reactions like chasing a very close loose ball.</summary>
-        /// <param name="player">The player reacting.</param>
-        /// <param name="state">The current match state.</param>
-        /// <returns>True if a reaction was handled, false otherwise.</returns>
-        private bool TryHandleReactions(SimPlayer player, MatchState state)
-        {
-            // React to nearby loose ball
-            if (state.Ball.IsLoose)
-            {
-                Vector2 ballPos2D = new Vector2(state.Ball.Position.x, state.Ball.Position.z);
-                if (Vector2.Distance(player.Position, ballPos2D) < MatchSimulator.LOOSE_BALL_PICKUP_RADIUS * LOOSE_BALL_REACTION_RANGE_MULTIPLIER)
-                {
-                    player.PlannedAction = PlayerAction.ChasingBall;
-                    player.CurrentAction = PlayerAction.ChasingBall;
-                    player.TargetPosition = ballPos2D;
-                    player.TargetPlayer = null; // Ensure no target player while chasing
-                    return true; // Reaction handled
-                }
-            }
-            // More complex reactions (intercept, receive) handled by ShouldSkipDecision persistence check
-            return false; // No simple reaction handled
-        }
-
-        /// <summary>Determines the best offensive action for a field player.</summary>
-        /// <param name="player">The player deciding.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The team's tactic.</param>
-        /// <param name="hasBall">Whether the player currently has possession.</param>
-        private void DecideOffensiveAction(SimPlayer player, MatchState state, Tactic tactic, bool hasBall)
-        {
-            // Added null checks for safety, though should be caught by DecidePlayerAction
-            if (player?.BaseData == null || state == null || tactic == null) return;
-
-            // --- Phase-specific Score Modifiers ---
-            // These are applied after base score calculation and risk/personality modifiers
-            float phaseDribbleModifier = 1f;
-            float phasePassModifier = 1f;
-            float phaseShootModifier = 1f;
-            float phaseScreenModifier = 1f;
-            float phaseComplexPassModifier = 1f;
-            float prepTimeFactor = 1f;
-            float actionThresholdFactor = 1f;
-
-            // If player doesn't have the ball, their offensive action is to get into position
-            if (!hasBall)
-            {
-                SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                return;
-            }
-
-            // --- Evaluate Screen Opportunities First ---
-            var aiContext = new PlayerAIContext { Player = player, MatchState = state, Tactics = tactic, TacticPositioner = _tacticPositioner };
-            var screenOpportunity = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.EvaluateScreenOpportunity(aiContext);
-            if (screenOpportunity != null)
-                screenOpportunity.Confidence *= phaseScreenModifier;
-            if (screenOpportunity != null && screenOpportunity.IsSuccessful && screenOpportunity.Confidence > 0.5f)
-            {
-                // Use new ScreenDecisionData for screen positioning
-                if (screenOpportunity.Data is ScreenDecisionData screenData)
-                {
-                    player.TargetPlayer = screenData.User;
-                    player.TargetPosition = screenData.ScreenSpot;
-                }
-                else
-                {
-                    player.TargetPlayer = screenOpportunity.Data as SimPlayer;
-                }
-                player.PlannedAction = PlayerAction.SettingScreen;
-                SetPlayerAction(player, PlayerAction.SettingScreen, 0.0f, 0.0f, state); // No prep time for screen (can adjust)
-                return;
-            }
-
-            var useScreen = (_offensiveDecisionMaker as DefaultOffensiveDecisionMaker)?.CanUseScreen(aiContext);
-            if (useScreen != null)
-                useScreen.Confidence *= phaseScreenModifier;
-            if (useScreen != null && useScreen.IsSuccessful && useScreen.Confidence > 0.5f)
-            {
-                // Defensive AI logic here (example: marking, blocking, positioning)
-                Vector2 markingTarget = Vector2.zero; // TODO: Replace with actual marking logic
-                bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.AttemptingBlock;
-                bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
-                var pitchGeometry = (_tacticPositioner as HandballManager.Simulation.AI.Positioning.TacticPositioner)?.Geometry as HandballManager.Simulation.Utils.PitchGeometryProvider;
-                if (!willBeInAir && pitchGeometry != null && pitchGeometry.IsInGoalArea(new Vector3(markingTarget.x, SimConstants.BALL_RADIUS, markingTarget.y), player.TeamSimId == 0))
-                {
-                    // Reroute around the 6m zone if not about to jump
-                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
-                }
-                // If the path to target crosses the 6m zone and not jumping, reroute
-                if (!willBeInAir && pitchGeometry.WouldCrossGoalArea(player.Position, markingTarget, player.TeamSimId))
-                {
-                    markingTarget = PitchGeometryProvider.CalculatePathAroundGoalArea(player.Position, markingTarget, player.TeamSimId, pitchGeometry);
-                }
-                // Use markingTarget for movement/positioning
-
-                if (useScreen.Data is ScreenUseData useData)
-                {
-                    player.TargetPlayer = useData.Screener;
-                    player.TargetPosition = useData.UseSpot;
-                }
-                else
-                {
-                    player.TargetPlayer = useScreen.Data as SimPlayer;
-                }
-                player.PlannedAction = PlayerAction.UsingScreen;
-                SetPlayerAction(player, PlayerAction.UsingScreen, 0.0f, 0.0f, state);
-                return;
-            }
-
-            // --- Evaluate Action Scores ---
-            float shootScore = _shootDecisionMaker.EvaluateShootScore(player, state, tactic);
-            PassOption bestPass = _passDecisionMaker.GetBestPassOption(player, state, tactic);
-            float passScore = bestPass?.Score ?? 0f;
-            // Apply complex pass modifier if pass is complex
-            if (bestPass != null && bestPass.IsComplex)
-                passScore *= phaseComplexPassModifier;
-            float dribbleScore = _dribbleDecisionMaker.EvaluateDribbleScore(player, state, tactic);
-
-            // --- Passive Play Warning: Urgency Modifiers ---
-            var passiveManager = GetPassivePlayManagerFromSimulator(_matchSimulator);
-            if (passiveManager != null && passiveManager.PassivePlayWarningActive && player.TeamSimId == passiveManager.WarningTeamSimId)
-            {
-                // Increase urgency for shooting and riskier passes, decrease for holding
-                shootScore *= 1.7f;
-                passScore *= 1.5f;
-                actionThresholdFactor *= 0.7f; // Lower threshold, more likely to act
-                // Optionally, further deprioritize dribble/hold by not boosting dribbleScore
-            }
-
-            // --- Phase Detection ---
-            // Note: GamePhase is defined in Core.Enums.cs, state.CurrentPhase is available
-            bool isTransitionPhase = state.CurrentPhase == GamePhase.TransitionToHomeAttack || state.CurrentPhase == GamePhase.TransitionToAwayAttack;
-            bool isPositionalAttackPhase = state.CurrentPhase == GamePhase.HomeAttack || state.CurrentPhase == GamePhase.AwayAttack;
-
-            if (isTransitionPhase)
-            {
-                // Fast break: prioritize direct actions
-                phaseDribbleModifier = TRANSITION_DRIBBLE_MODIFIER;
-                phasePassModifier = TRANSITION_PASS_MODIFIER;
-                phaseShootModifier = TRANSITION_SHOOT_MODIFIER;
-                phaseScreenModifier = TRANSITION_SCREEN_MODIFIER;
-                phaseComplexPassModifier = TRANSITION_COMPLEX_PASS_MODIFIER;
-                prepTimeFactor = TRANSITION_PREP_TIME_FACTOR;
-                actionThresholdFactor = TRANSITION_ACTION_THRESHOLD_FACTOR;
-            }
-            else if (isPositionalAttackPhase)
-            {
-                // Settled attack: encourage tactical play
-                phaseScreenModifier = POSITIONAL_SCREEN_MODIFIER;
-                // Could extend: phasePassModifier = POSITIONAL_FORMATION_PASS_MODIFIER; (if pass type detectable)
-            }
-            // (Other phases: keep modifiers at 1.0)
-
-            // --- Apply Strong Evaluator Modifiers (amplified influence) ---
-            // These modifiers now have a wide range (e.g. 0.5x–2.0x+) to make AI behavior more adaptive
-            float tacticalRiskMod = Mathf.Clamp(_tacticalEvaluator.GetRiskModifier(tactic), 0.5f, 2.0f);
-            float personalityRiskMod = Mathf.Clamp(_personalityEvaluator.GetRiskModifier(player.BaseData), 0.5f, 2.0f);
-            float gameStateRiskMod = Mathf.Clamp(_gameStateEvaluator.GetAttackRiskModifier(state, player.TeamSimId), 0.5f, 2.0f);
-            float combinedRiskFactor = tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
-
-            // --- Apply as strong multipliers/dividers ---
-            // For shots and dribbles, higher risk increases likelihood; for passes, higher risk reduces safe pass preference
-            shootScore *= tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
-            dribbleScore *= tacticalRiskMod * personalityRiskMod * gameStateRiskMod;
-            passScore /= Mathf.Max(0.1f, tacticalRiskMod * personalityRiskMod * gameStateRiskMod);
-
-            // Apply personality tendency modifiers (still multiplicative, but after risk)
-            shootScore *= Mathf.Clamp(_personalityEvaluator.GetShootingTendencyModifier(player.BaseData), 0.5f, 2.0f);
-            passScore  *= Mathf.Clamp(_personalityEvaluator.GetPassingTendencyModifier(player.BaseData), 0.5f, 2.0f);
-            dribbleScore *= Mathf.Clamp(_personalityEvaluator.GetDribblingTendencyModifier(player.BaseData), 0.5f, 2.0f);
-
-            // NOTE: Removed DRIBBLING_RISK_ADJUSTMENT and PASS_SAFETY_ADJUSTMENT to let evaluators dominate
-            // This ensures evaluator output meaningfully shifts action selection under different tactical/game/personality contexts.
-
-            // --- Apply Phase-specific Modifiers (after risk/personality) ---
-            dribbleScore *= phaseDribbleModifier;
-            passScore *= phasePassModifier;
-            shootScore *= phaseShootModifier;
-            // Note: Complex pass and screen modifiers would require more granular pass/screen type logic.
-            // If pass is complex (not implemented here), could apply phaseComplexPassModifier.
-            // For screen opportunities, see below.
-
-            // --- Choose Best Action ---
-            // Lower threshold for taking action during transition (faster decision-making)
-            float phaseActionThreshold = BASE_ACTION_THRESHOLD * actionThresholdFactor;
-            float bestScore = phaseActionThreshold;
-            PlayerAction chosenAction = PlayerAction.MovingWithBall; // Default
-            SimPlayer passTarget = bestPass?.Player; // Store potential target early
-
-            if (shootScore > bestScore) { bestScore = shootScore; chosenAction = PlayerAction.PreparingShot; }
-            if (passScore > bestScore) { bestScore = passScore; chosenAction = PlayerAction.PreparingPass; } // Pass target already stored
-            if (dribbleScore > bestScore) { chosenAction = PlayerAction.Dribbling; }
-
-            // --- Set Player State ---
-            switch (chosenAction)
-            {
-                case PlayerAction.PreparingShot:
-                    player.PlannedAction = PlayerAction.PreparingShot;
-                    // Reduce shot prep time during transition phases for quick shots
-                    float shotPrepBase = SHOT_PREP_TIME_BASE * prepTimeFactor;
-                    SetPlayerAction(player, PlayerAction.PreparingShot, shotPrepBase, SHOT_PREP_TIME_RANDOM_FACTOR, state);
-                    break;
-                case PlayerAction.PreparingPass:
-                    // **FIXED:** Check passTarget (derived from bestPass.Player) is not null *before* using it.
-                    if (passTarget != null)
+                    if (defensiveAction == PlayerAction.Blocking)
                     {
-                        player.TargetPlayer = passTarget;
-                        player.PlannedAction = PlayerAction.PreparingPass;
-                        // Reduce pass prep time during transition phases for quick passes
-                        float passPrepBase = PASS_PREP_TIME_BASE * prepTimeFactor;
-                        SetPlayerAction(player, PlayerAction.PreparingPass, passPrepBase, PASS_PREP_TIME_RANDOM_FACTOR, state);
+                         // Check legality before setting block action
+                         float distanceToBallSqr = (player.Position - new Vector2(state.Ball.Position.x, state.Ball.Position.y)).sqrMagnitude;
+                         bool isLegalDistance = distanceToBallSqr > (SimConstants.SET_PIECE_DEFENDER_DISTANCE * SimConstants.SET_PIECE_DEFENDER_DISTANCE);
+                         if(isLegalDistance)
+                         {
+                             SetPlayerAction(player, PlayerAction.Blocking, GetPrepTime(PlayerAction.Blocking), GetPrepTimeRandomFactor(PlayerAction.Blocking), state, state.Ball.Position);
+
+                             // Jump logic (if needed, should be handled by Defensive AI or Action Resolver?)
+                              if (_jumpSimulator != null && JumpDecisionUtils.ShouldJumpForBlock(player, state)) // Pass SimPlayer
+                              {
+                                  float verticalVelocity = CalculateJumpVerticalVelocity(player); // Pass SimPlayer
+                                  _jumpSimulator.StartJump();
+                                  Debug.Log($"[AI SetPiece] Defender {player.BaseData?.FullName} is JUMPING to block.");
+                              }
+
+                              Debug.Log($"[AI SetPiece] Defender {player.BaseData?.FullName} attempting block.");
+                         }
+                         else // Too close, must reposition
+                         {
+                             SetPlayerToMoveToTacticalPosition(player, state, tactic); // Reposition if illegal block
+                         }
                     }
-                    else
+                    else if (defensiveAction == PlayerAction.MovingToPosition)
                     {
-                        Debug.LogWarning($"Player {player.GetPlayerId()} chose Pass but passTarget is null (Pass Score: {passScore}). Falling back.");
-                        SetPlayerToMoveToTacticalPosition(player, state, tactic); // Fallback if target invalid
+                         SetPlayerToMoveToTacticalPosition(player, state, tactic);
                     }
-                    break;
-                case PlayerAction.Dribbling: // Treat Dribbling decision as MovingWithBall state for movement sim
-                    player.PlannedAction = PlayerAction.Dribbling;
-                    player.CurrentAction = PlayerAction.MovingWithBall;
+                    else // Idle or other action
+                    {
+                         SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+                    }
+                 }
+                 else
+                 {
+                    Debug.LogWarning("[PlayerAIController] DefensiveAIController not injected for set piece defender.");
+                    SetPlayerToMoveToTacticalPosition(player, state, tactic); // Fallback positioning
+                 }
+             }
+             else if (player.BaseData.PrimaryPosition != PlayerPosition.Goalkeeper) // Other attackers or distant defenders
+             {
+                 // Move to tactical position if not already moving or idle
+                 if (player.PlannedAction != PlayerAction.MovingToPosition && player.PlannedAction != PlayerAction.Idle)
+                 {
                     SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                    break;
-                case PlayerAction.MovingWithBall: // Default action
-                default:
-                    player.PlannedAction = PlayerAction.MovingWithBall;
-                    player.CurrentAction = PlayerAction.MovingWithBall;
-                    SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                    break;
-            }
+                 }
+             }
+             // GK logic is handled by DecideGoalkeeperAction, called from DecidePlayerAction
         }
 
-        /// <summary>Determines the best defensive action for a field player.</summary>
-        /// <param name="player">The player deciding.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The team's tactic.</param>
-        private void DecideDefensiveAction(SimPlayer player, MatchState state, Tactic tactic)
+        /// <summary>Decides the action for an offensive player *with* the ball.</summary>
+        private void DecideOffensiveAction(SimPlayer player, MatchState state, Tactic tactic)
         {
-            // Added null checks for safety
-            if (player?.BaseData == null || state == null || tactic == null) return;
+            // Restore OffensiveAction logic (using SimPlayer)
+            if (player == null || state == null || tactic == null || !player.HasBall) return;
 
-            // Delegate decision to the specialized maker
-            DefensiveAction defensiveChoice = _defenseDecisionMaker.DecideDefensiveAction(player, state, tactic);
-
-            // Apply the chosen action
-            player.TargetPlayer = defensiveChoice.TargetPlayer;
-            player.TargetPosition = defensiveChoice.TargetPosition;
-
-            // Set timer only if it's a preparatory action like Tackle
-            if (defensiveChoice.Action == PlayerAction.AttemptingTackle)
+            if (_offensiveAIController != null)
             {
-                // Use SetPlayerAction to handle timer and state correctly
-                player.PlannedAction = PlayerAction.AttemptingTackle;
-                SetPlayerAction(player, PlayerAction.AttemptingTackle, TACKLE_PREP_TIME, 0f, state);
+                // Delegate the core decision logic to the OffensiveAIController
+                PlayerAction action = _offensiveAIController.DetermineOffensiveAction(state, player);
+SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+
+                // PlayerAIController still handles *setting* the action based on the decision made by the OffensiveAIController
+                // Assume DecideAction sets player.PlannedAction, TargetPosition, TargetPlayer internally or PlayerAIController retrieves them
+                Debug.Log($"[PlayerAIController] Offensive action for {player.BaseData?.FullName}: {player.PlannedAction}");
             }
             else
             {
-                // For non-timed actions (Mark, Block, Move), just set the state directly
-                player.PlannedAction = defensiveChoice.Action;
-                player.CurrentAction = defensiveChoice.Action;
-                // Ensure timer is clear for non-preparatory actions
-                if (player.ActionTimer > 0) player.ActionTimer = 0f;
+                Debug.LogWarning("[PlayerAIController] OffensiveAIController not injected for offensive action.");
+                SetPlayerToMoveToTacticalPosition(player, state, tactic); // Fallback
             }
         }
 
-        /// <summary>Decision logic for Goalkeepers.</summary>
-        /// <param name="gk">The goalkeeper SimPlayer.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The team's tactic.</param>
-        private void DecideGoalkeeperAction(SimPlayer gk, MatchState state, Tactic tactic)
+        /// <summary>Decides the best action for a player *without* the ball.</summary>
+        private void DecideOffBallAction(SimPlayer player, MatchState state, Tactic tactic)
         {
-            // Added null checks for safety
-            if (gk?.BaseData == null || state == null || tactic == null) return;
+            // Restore OffBallAction logic (using SimPlayer)
+            if (player == null || state == null || tactic == null || player.HasBall) return;
 
-            bool isOwnTeamPossession = gk.TeamSimId == state.PossessionTeamId && state.PossessionTeamId != -1;
+            bool ownTeamHasPossession = state.PossessionTeamId == player.TeamSimId;
 
-            // Priority 1: Has Ball - Decide pass vs hold
-            if (gk.HasBall)
+            if (ownTeamHasPossession)
             {
-                PassOption bestPass = _passDecisionMaker.GetBestPassOption(gk, state, tactic);
-                float passThreshold = GK_PASS_ATTEMPT_THRESHOLD * _gameStateEvaluator.GetGoalkeeperPassSafetyModifier(state, gk.TeamSimId);
-
-                if (bestPass?.Player != null && bestPass.Score > passThreshold) // Check Player is not null too
+                // Offensive Off-Ball Logic
+                if (_offensiveAIController != null)
                 {
-                    gk.TargetPlayer = bestPass.Player;
-                    gk.PlannedAction = PlayerAction.PreparingPass;
-                    SetPlayerAction(gk, PlayerAction.PreparingPass, GK_PASS_PREP_TIME_BASE, GK_PASS_PREP_TIME_RANDOM_FACTOR, state);
+                    // Delegate decision AND positioning to Offensive Controller
+                     var decision = _offensiveAIController.DetermineOffBallOffensiveAction(state, player, tactic);
+                    player.PlannedAction = decision.Action;
+                    if (decision.ScreenData.HasValue)
+                    {
+                        var screenUseData = new DefaultOffensiveDecisionMaker.ScreenUseData {
+                            Screener = decision.ScreenData.Value.Screener,
+                            User = decision.ScreenData.Value.User,
+                            UseSpot = decision.ScreenData.Value.ScreenSpot,
+                            EffectivenessAngle = decision.ScreenData.Value.EffectivenessAngle
+                        };
+                        player.SetCurrentScreenUseData(screenUseData);
+                    }
+
+                    // Assume OffensiveAIController handles setting the action/target internally
+                     Debug.Log($"[PlayerAIController] Off-ball offensive action for {player.BaseData?.FullName}: {player.PlannedAction}");
                 }
                 else
                 {
-                    gk.CurrentAction = PlayerAction.Idle;
-                    gk.TargetPosition = gk.Position;
-                    gk.Velocity = Vector2.zero;
+                     Debug.LogWarning("[PlayerAIController] OffensiveAIController not injected for off-ball offensive action.");
+                     SetPlayerToMoveToTacticalPosition(player, state, tactic); // Fallback positioning
                 }
-                return;
             }
-
-            // Priority 2: Opponent Shot In Flight - Position to Save
-            bool isShotIncoming = state.Ball.IsInFlight && state.Ball.LastShooter != null && state.Ball.LastShooter.TeamSimId != gk.TeamSimId;
-            if (isShotIncoming)
+            else // Opponent has possession or ball is loose
             {
-                Vector3 predictedImpact = _ballPhysics.EstimateBallGoalLineImpact3D(state.Ball, gk.TeamSimId);
-                gk.TargetPosition = _gkPositioner.GetGoalkeeperSavePosition(gk, state, predictedImpact);
-                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
-                gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
-                gk.TargetPlayer = null;
-                return;
-            }
-
-            // Priority 3: Opponent Has Ball / Ball Loose Nearby - Position Defensively
-            if (!isOwnTeamPossession)
-            {
-                gk.TargetPosition = _gkPositioner.GetGoalkeeperDefensivePosition(gk, state);
-                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
-                gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
-                gk.TargetPlayer = null;
-                return;
-            }
-
-            // Priority 4: Own Team Has Ball - Provide Support / Default Positioning
-            gk.TargetPosition = _gkPositioner.GetGoalkeeperAttackingSupportPosition(gk, state);
-            if (Vector2.Distance(gk.Position, gk.TargetPosition) > DIST_TO_TARGET_MOVE_TRIGGER_THRESHOLD)
-            {
-                gk.PlannedAction = PlayerAction.GoalkeeperPositioning;
-                gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
-            }
-            else if (gk.CurrentAction == PlayerAction.GoalkeeperPositioning) // Arrived
-            {
-                gk.CurrentAction = PlayerAction.Idle;
-                gk.Velocity *= ARRIVAL_VELOCITY_DAMPING_FACTOR;
-            }
-            gk.TargetPlayer = null;
-        }
-        #endregion
-
-        #region Helper Methods
-        /// <summary>Applies fallback positioning if no specific action was chosen.</summary>
-        /// <param name="player">The player to position.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The team's tactic.</param>
-        private void ApplyFallbackPositioning(SimPlayer player, MatchState state, Tactic tactic)
-        {
-            // Ensure player moves towards tactical position if idle or has arrived at previous target
-            bool needsRepositioning = player.CurrentAction == PlayerAction.Idle ||
-                                      (IsMovementAction(player.CurrentAction) && Vector2.Distance(player.Position, player.TargetPosition) < DIST_TO_TARGET_IDLE_THRESHOLD);
-
-            // Also reposition if marking state is invalid
-            if (player.CurrentAction == PlayerAction.MarkingPlayer && (player.TargetPlayer == null || !player.TargetPlayer.IsOnCourt || player.TargetPlayer.SuspensionTimer > 0))
-            {
-                needsRepositioning = true;
-            }
-
-            if (needsRepositioning)
-            {
-                player.PlannedAction = PlayerAction.MovingToPosition;
-                SetPlayerToMoveToTacticalPosition(player, state, tactic);
+                // Defensive Off-Ball Logic
+                 if (_defensiveAIController != null)
+                 {
+                    // Delegate decision AND positioning to Defensive Controller
+                     PlayerAction action = _defensiveAIController.DetermineDefensiveAction(state, player, tactic);
+SetPlayerAction(player, action, GetPrepTime(action), GetPrepTimeRandomFactor(action), state);
+Debug.Log($"[PlayerAIController] Off-ball defensive action for {player.BaseData?.FullName}: {player.PlannedAction}");
+                 }
+                 else
+                 {
+                      Debug.LogWarning("[PlayerAIController] DefensiveAIController not injected for off-ball defensive action.");
+                      SetPlayerToMoveToTacticalPosition(player, state, tactic); // Fallback positioning
+                 }
             }
         }
 
-        /// <summary>Commands the player to move towards their calculated tactical position.</summary>
-        /// <param name="player">The player to position.</param>
-        /// <param name="state">The current match state.</param>
-        /// <param name="tactic">The team's tactic.</param>
+        /// <summary>Calculates the target position based on tactical role and game state.</summary>
+        // Restore SetPlayerToMoveToTacticalPosition logic AFTER SimPlayer update (Step 1377)
         private void SetPlayerToMoveToTacticalPosition(SimPlayer player, MatchState state, Tactic tactic)
         {
-            // Basic validation
-            if (player?.BaseData == null || state == null || _tacticPositioner == null || tactic == null) return;
+            // Restore logic from Step 1413
+            if (player == null || state == null || tactic == null) return;
 
-            // Goalkeepers positioning is handled entirely within DecideGoalkeeperAction
-            if (player.AssignedTacticalRole == PlayerPosition.Goalkeeper) return;
-
-            Vector2 tacticalPos = _tacticPositioner.GetPlayerTargetPosition(state, player);
-
-            // Apply personality modifier for work rate/laziness (if implemented)
-            // tacticalPos = _personalityEvaluator.AdjustPositionForWorkRate(player.BaseData, player.Position, tacticalPos);
-
-            // Check if significant movement is required
-            if (Vector2.Distance(player.Position, tacticalPos) > DIST_TO_TARGET_MOVE_TRIGGER_THRESHOLD)
+            Vector2 targetPos;
+            // Use BaseData.PrimaryPosition for role check
+            if (player.BaseData.PrimaryPosition == PlayerPosition.Goalkeeper)
             {
-                player.TargetPosition = tacticalPos;
-                player.TargetPlayer = null; // Clear target player when moving positionally
-
-                // Set movement action state only if not already moving appropriately or if idle
-                if (player.CurrentAction == PlayerAction.Idle || !IsMovementAction(player.CurrentAction))
+                if (_goalkeeperAIController != null)
                 {
-                    player.CurrentAction = player.HasBall ? PlayerAction.MovingWithBall : PlayerAction.MovingToPosition;
-                }
-                // If already MovingWithBall/MovingToPosition, just updating TargetPosition is sufficient.
-            }
-            else if (IsMovementAction(player.CurrentAction) && player.CurrentAction != PlayerAction.MarkingPlayer) // Arrived at target, excluding marking state
-            {
-                // Transition general movement actions to Idle
-                if (player.CurrentAction == PlayerAction.MovingToPosition || player.CurrentAction == PlayerAction.MovingWithBall || player.CurrentAction == PlayerAction.Dribbling)
-                {
-                    player.CurrentAction = PlayerAction.Idle;
-                    player.TargetPosition = player.Position; // Stop targeting the old pos
-                    player.Velocity *= ARRIVAL_VELOCITY_DAMPING_FACTOR;
-                    player.TargetPlayer = null;
-                }
-                // Let MarkingPlayer persist even when close, TacticPositioner adjusts target pos
-            }
-            // If Idle and already close, remain Idle.
-        }
-
-        /// <summary>Sets the player's action, timer, and resets positional targets/velocity appropriately.</summary>
-        /// <param name="player">The player whose action to set.</param>
-        /// <param name="action">The action to set.</param>
-        /// <param name="baseTime">The base preparation time for the action.</param>
-        /// <param name="randomFactor">The random variance factor for the prep time (0 to 1).</param>
-        /// <param name="state">The current match state (for random number generation).</param>
-        private void SetPlayerAction(SimPlayer player, PlayerAction action, float baseTime, float randomFactor, MatchState state)
-        {
-            if (player == null || state == null) return;
-
-            player.CurrentAction = action;
-
-            // Use state's random generator safely
-            float randomValue = (state.RandomGenerator != null) ? (float)state.RandomGenerator.NextDouble() : 0.5f;
-
-            // Apply personality hesitation modifier (if evaluator available)
-            float hesitationMod = _personalityEvaluator?.GetHesitationModifier(player.BaseData) ?? 1.0f;
-
-            // Calculate and set timer, ensuring a minimum duration
-            player.ActionTimer = Mathf.Max(MIN_ACTION_TIMER, (baseTime + randomValue * randomFactor) * hesitationMod);
-
-            // Stop movement during preparation, unless it's inherently a movement action
-            if (!IsMovementAction(action))
-            {
-                player.TargetPosition = player.Position; // Target current spot
-                player.Velocity *= PREP_VELOCITY_DAMPING_FACTOR; // Drastically reduce speed
-            }
-
-            // Clear TargetPlayer unless it's inherently needed by the action
-            // (TargetPlayer for pass/tackle is set *before* calling this)
-            if (action != PlayerAction.PreparingPass && action != PlayerAction.AttemptingTackle && action != PlayerAction.MarkingPlayer)
-            {
-                player.TargetPlayer = null;
-            }
-        }
-
-        /// <summary>Checks if a PlayerAction primarily involves player movement.</summary>
-        /// <param name="action">The action to check.</param>
-        /// <returns>True if the action is a movement state, false otherwise.</returns>
-        private bool IsMovementAction(PlayerAction action)
-        {
-            // Defines actions where the player is actively trying to change position
-            switch (action)
-            {
-                case PlayerAction.MovingToPosition:
-                case PlayerAction.MovingWithBall:
-                case PlayerAction.ChasingBall:
-                case PlayerAction.MarkingPlayer:       // Constant adjustment = movement
-                case PlayerAction.ReceivingPass:       // Movement to intercept point
-                case PlayerAction.AttemptingIntercept: // Movement towards intercept point
-                case PlayerAction.GoalkeeperPositioning:
-                case PlayerAction.AttemptingBlock:     // Movement towards block spot
-                case PlayerAction.Dribbling:           // Explicit dribbling/running
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        /// <summary>Resets a player's state to a safe default (Idle) in case of an error during decision making.</summary>
-        /// <param name="player">The player whose state needs resetting.</param>
-        private void ResetPlayerStateOnError(SimPlayer player)
-        {
-            if (player != null && player.SuspensionTimer <= 0)
-            {
-                player.CurrentAction = PlayerAction.Idle;
-                player.ActionTimer = 0f;
-                player.TargetPlayer = null;
-                player.TargetPosition = player.Position;
-                player.Velocity = Vector2.zero; // Stop movement completely on error
-            }
-        }
-        #endregion
-
-        #region SetPieceAndPenaltyLogic
-        /// <summary>Handles AI logic for free kicks (set pieces) and penalties.</summary>
-        private void HandleSetPieceAndPenaltyPhases(SimPlayer player, MatchState state, Tactic tactic)
-        {
-            // Free kick (Set Piece)
-            if (state.CurrentPhase == GamePhase.HomeSetPiece || state.CurrentPhase == GamePhase.AwaySetPiece)
-            {
-                bool isShooter = player.HasBall;
-                bool isDefender = player.TeamSimId != state.PossessionTeamId;
-                if (isShooter)
-                {
-                    bool canShoot = EvaluateSetPieceShootingChance(player, state, tactic);
-                    if (canShoot)
-                    {
-                        SetPlayerAction(player, PlayerAction.PreparingShot, SHOT_PREP_TIME_BASE, SHOT_PREP_TIME_RANDOM_FACTOR, state);
-                    }
-                    else
-                    {
-                        PlayerData best = FindBestPassTarget(state, player.BaseData);
-                        if (best != null)
-                        {
-                            SimPlayer target = state.GetPlayerById(best.PlayerID);
-                            SetPlayerAction(player, PlayerAction.PreparingPass, PASS_PREP_TIME_BASE, PASS_PREP_TIME_RANDOM_FACTOR, state);
-                            player.TargetPlayer = target;
-                        }
-                        else
-                        {
-                            // Remplacement de HoldingBall par Idle, car la possession est déjà gérée par player.HasBall
-                            SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
-                        }
-                    }
-                }
-                else if (!isDefender)
-                {
-                    SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                    player.PlannedAction = PlayerAction.MovingToPosition;
+                    // Pass SimPlayer to CalculateGoalkeeperPosition
+                    targetPos = _goalkeeperAIController.CalculateGoalkeeperPosition(state, player);
                 }
                 else
                 {
-                    SetPlayerToMoveToTacticalPosition(player, state, tactic);
-                    player.PlannedAction = PlayerAction.MovingToPosition;
-                }
-                return;
-            }
-            // Penalty
-            if (state.CurrentPhase == GamePhase.HomePenalty || state.CurrentPhase == GamePhase.AwayPenalty)
-            {
-                int taker = tactic?.PrimaryPenaltyTakerPlayerID ?? -1;
-                bool isTaker = player.GetPlayerId() == taker || player.HasBall;
-                bool isGk = player.AssignedTacticalRole == PlayerPosition.Goalkeeper;
-                if (isTaker)
-                {
-                    SetPlayerAction(player, PlayerAction.PreparingShot, SHOT_PREP_TIME_BASE, SHOT_PREP_TIME_RANDOM_FACTOR, state);
-                }
-                else if (isGk)
-                {
-                    SetPlayerAction(player, PlayerAction.GoalkeeperSaving, SHOT_PREP_TIME_BASE, SHOT_PREP_TIME_RANDOM_FACTOR, state);
-                }
-                else
-                {
-                    SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
-                }
-                return;
-            }
-        }
-
-        private bool EvaluateSetPieceShootingChance(SimPlayer player, MatchState state, Tactic tactic)
-        {
-            // --- Seul cas où on tire : moins de 2s avant la fin OU jeu passif (1 passe ou moins) ---
-            float secondsLeft;
-            float matchDuration = state.MatchDurationSeconds > 0 ? state.MatchDurationSeconds : 3600f; // fallback 1h
-            float halfDuration = matchDuration / 2f;
-            if (state.MatchTimeSeconds < halfDuration) // 1ère mi-temps
-                secondsLeft = halfDuration - state.MatchTimeSeconds;
-            else // 2ème mi-temps
-                secondsLeft = matchDuration - state.MatchTimeSeconds;
-            bool isEndOfHalf = secondsLeft < 2.0f;
-
-            // Accès au PassivePlayManager via le MatchSimulator injecté (pas via MatchState)
-            var passiveManager = GetPassivePlayManagerFromSimulator(_matchSimulator);
-            bool isPassiveWarning = passiveManager?.PassivePlayWarningActive == true;
-            int passesSinceWarning = passiveManager?.PassesSinceWarning ?? int.MaxValue;
-            bool isEndOfPassive = isPassiveWarning && passesSinceWarning >= 3; // 4 passes après warning
-
-            return isEndOfHalf || isEndOfPassive;
-        }
-
-        /// <summary>
-        /// Safely retrieves the PassivePlayManager instance from the given MatchSimulator.
-        /// Returns null if the simulator or manager is unavailable.
-        /// </summary>
-        /// <param name="simulator">The MatchSimulator instance (should be injected).</param>
-        /// <returns>The PassivePlayManager instance, or null if unavailable.</returns>
-        private PassivePlayManager GetPassivePlayManagerFromSimulator(MatchSimulator simulator)
-        {
-            // Defensive: null check and property access
-            if (simulator == null)
-                return null;
-            return simulator.PassivePlayManager;
-        }
-        #endregion
-
-        #region Interface Implementation
-        /// <summary>
-        /// Calculates the optimal position for a player based on tactical considerations.
-        /// Implementation of IPlayerAIController.CalculatePlayerPosition
-        /// </summary>
-        /// <param name="state">The current match state.</param>
-        /// <param name="player">The player to calculate position for.</param>
-        /// <returns>The target position vector for the player.</returns>
-        public Vector2 CalculatePlayerPosition(MatchState state, PlayerData player)
-        {
-            // Validation des paramètres
-            if (state == null || player == null)
-            {
-                Debug.LogWarning("[PlayerAIController] CalculatePlayerPosition called with null state or player.");
-                return Vector2.zero;
-            }
-
-            // Trouver le SimPlayer correspondant au PlayerData
-            SimPlayer simPlayer = state.GetPlayerById(player.PlayerID);
-            if (simPlayer == null)
-            {
-                Debug.LogWarning($"[PlayerAIController] Player {player.PlayerID} not found in match state.");
-                return Vector2.zero;
-            }
-
-            // Obtenir la tactique appropriée
-            Tactic tactic = (simPlayer.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
-
-            // Utiliser le positionneur tactique pour déterminer la position optimale
-            if (simPlayer.AssignedTacticalRole == PlayerPosition.Goalkeeper)
-            {
-                // Position spécifique pour le gardien de but
-                if (simPlayer.TeamSimId == state.PossessionTeamId)
-                {
-                    // En attaque
-                    return _gkPositioner.GetGoalkeeperAttackingSupportPosition(simPlayer, state);
-                }
-                else
-                {
-                    // En défense
-                    return _gkPositioner.GetGoalkeeperDefensivePosition(simPlayer, state);
+                     Debug.LogWarning($"[PlayerAIController] GoalkeeperAIController not injected for positioning {player.BaseData?.FullName}.");
+                     // Fallback: Use TacticPositioner for goalkeeper positioning if necessary?
+                     targetPos = _tacticPositioner.GetPlayerTargetPosition(state, player); // Fallback: use general player positioning
                 }
             }
             else
-            {
-                // Position pour les joueurs de champ basée sur la tactique
-                return _tacticPositioner.GetPlayerTargetPosition(state, simPlayer);
+            { 
+                // Use TacticPositioner for field player positioning
+                targetPos = _tacticPositioner.GetPlayerTargetPosition(state, player);
             }
+
+            // --- Movement Logic (Common for GK and Field Players) ---
+            float distSq = (targetPos - player.Position).sqrMagnitude;
+
+            // Only issue a new move command if the target changed significantly or player is idle
+            if (distSq > DIST_TO_TARGET_MOVE_TRIGGER_THRESHOLD * DIST_TO_TARGET_MOVE_TRIGGER_THRESHOLD || player.PlannedAction == PlayerAction.Idle)
+            {
+                SetPlayerAction(player, PlayerAction.MovingToPosition, 0f, 0f, state, targetPos);
+            }
+            else if (player.PlannedAction == PlayerAction.MovingToPosition && distSq < DIST_TO_TARGET_IDLE_THRESHOLD * DIST_TO_TARGET_IDLE_THRESHOLD)
+            {
+                // If already moving and close enough, switch to idle
+                SetPlayerAction(player, PlayerAction.Idle, MIN_ACTION_TIMER, 0f, state);
+                player.Velocity *= ARRIVAL_VELOCITY_DAMPING_FACTOR; // Dampen velocity on arrival
+            }
+            // Else: Continue current action (likely already MovingToPosition towards an older target, or doing something else)
         }
 
         /// <summary>
         /// Evaluates potential passing targets and selects the best receiver.
-        /// Implementation of IPlayerAIController.FindBestPassTarget
+        /// Implementation required by IPlayerAIController.
+        /// Renamed from SelectPassingTarget.
         /// </summary>
-        /// <param name="state">The current match state.</param>
-        /// <param name="passer">The player attempting to pass.</param>
-        /// <returns>The best player to receive the pass, or null if no good option exists.</returns>
-        public PlayerData FindBestPassTarget(MatchState state, PlayerData passer)
+        public SimPlayer FindBestPassTarget(MatchState state, SimPlayer passer) // Updated signature to use SimPlayer
         {
-            // Validation des paramètres
-            if (state == null || passer == null)
+             // Restore logic from Step 1413, adapted for SimPlayer signature
+             // Delegate to the OffensiveAIController's implementation
+            if (_offensiveAIController != null && passer != null)
             {
-                Debug.LogWarning("[PlayerAIController] FindBestPassTarget called with null state or passer.");
-                return null;
+                // Directly use the SimPlayer passer
+                SimPlayer targetSim = _offensiveAIController.FindBestPassTarget(state, passer);
+                return targetSim; // Return the SimPlayer target
             }
 
-            // Trouver le SimPlayer correspondant au passeur
-            SimPlayer simPasser = state.GetPlayerById(passer.PlayerID);
-            if (simPasser == null)
-            {
-                Debug.LogWarning($"[PlayerAIController] Passer {passer.PlayerID} not found in match state.");
-                return null;
-            }
-
-            // Obtenir la tactique appropriée
-            Tactic tactic = (simPasser.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
-
-            // Utiliser le décideur de passes pour évaluer les options
-            PassOption bestPass = _passDecisionMaker.GetBestPassOption(simPasser, state, tactic);
-
-            // Retourner le PlayerData du meilleur receveur, ou null si aucune bonne option
-            return bestPass?.Player?.BaseData;
+            // Fallback or if controller/passer is null
+            Debug.LogWarning("[PlayerAIController] FindBestPassTarget called, but OffensiveAIController is missing or passer is null.");
+            return null;
         }
+
         #endregion
+        #region Interface Implementations
+
         /// <summary>
-        /// Calculates a rerouted target position that avoids the 6m goal area if the direct path crosses it.
-        /// Checks if the segment from 'from' to 'to' crosses the 6m goal area for the given team.
+        /// Determines the best action for a specific player based on the current game state.
+        /// Implementation required by IPlayerAIController.
         /// </summary>
+        public PlayerAction DeterminePlayerAction(MatchState state, SimPlayer player) // Updated signature to use SimPlayer
+        {
+            if (state == null || player == null) // Use SimPlayer directly
+            {
+                Debug.LogError("[PlayerAIController] DeterminePlayerAction called with null state or SimPlayer.");
+                return PlayerAction.Idle; // Default fallback
+            }
 
-    } // End Class PlayerAIController
-    
+            // SimPlayer simPlayer = state.GetPlayerById(player.PlayerID); // No longer needed, player is already SimPlayer
+            // if (simPlayer == null)
+            // {
+            //     Debug.LogWarning($"[PlayerAIController] Could not find SimPlayer for PlayerData {player.FullName} (ID: {player.PlayerID}) in DeterminePlayerAction.");
+            //     return PlayerAction.Idle; // Player might not be on court
+            // }
 
-} // End Namespace
+            try
+            {
+                // Get necessary context for the internal DecidePlayerAction
+                Tactic tactic = (player.TeamSimId == 0) ? state.HomeTactic : state.AwayTactic;
+                bool hasBall = state.Ball.Holder != null && state.Ball.Holder.PlayerID == player.PlayerID;
+
+                // Call the internal decision logic using the provided SimPlayer
+                DecidePlayerAction(player, state, tactic); // Pass SimPlayer directly
+
+                // Return the action decided by the internal method
+                return player.PlannedAction;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PlayerAIController] Error in DeterminePlayerAction for {player.BaseData?.FullName}: {e}");
+                // Safely fallback in case of error during decision
+                if(player != null) player.PlannedAction = PlayerAction.Idle;
+                return PlayerAction.Idle;
+            }
+        }
+
+        #endregion
+
+    /// <summary>
+    /// Sets the action, timer, and optionally target for a SimPlayer.
+    /// </summary>
+    private void SetPlayerAction(SimPlayer player, PlayerAction action, float actionTimer, float randomFactor, MatchState state, Vector2? targetPosition = null, SimPlayer targetPlayer = null)
+    {
+        if (player == null) return;
+        player.PlannedAction = action;
+        player.ActionTimer = actionTimer + UnityEngine.Random.Range(0f, randomFactor);
+        if (targetPosition.HasValue)
+            player.TargetPosition = targetPosition.Value;
+        if (targetPlayer != null)
+            player.TargetPlayer = targetPlayer;
+    }
+
+        /// <summary>
+    /// Calculates the vertical velocity for a player's jump based on their jumping attribute.
+    /// </summary>
+    /// <param name="player">The SimPlayer whose jump is being calculated.</param>
+    /// <returns>Vertical velocity for the jump (m/s).</returns>
+    private float CalculateJumpVerticalVelocity(SimPlayer player)
+    {
+        // Use player.BaseData.Jumping (0-100), default to 50 if missing
+        float jumpAttribute = player.BaseData?.Jumping ?? 50f;
+        float t = Mathf.Clamp01(jumpAttribute / 100f);
+        return Mathf.Lerp(SimConstants.MIN_JUMP_VERTICAL_VELOCITY, SimConstants.MAX_JUMP_VERTICAL_VELOCITY, t);
+    }
+
+    /// <summary>
+    /// Returns true if the player is the closest to the loose ball on the court.
+    /// </summary>
+    private bool IsClosestToLooseBall(SimPlayer player, MatchState state)
+    {
+        if (state?.Ball == null || player == null) return false;
+        float minDist = float.MaxValue;
+        SimPlayer closest = null;
+        foreach (var p in state.PlayersOnCourt)
+        {
+            if (p == null) continue;
+            // Convert 3D ball position (x,y,z) to 2D ground position (x,z) to match player's 2D position (x,y)
+            float dist = Vector2.Distance(p.Position, new Vector2(state.Ball.Position.x, state.Ball.Position.z));
+            if (dist < minDist)
+            {
+                minDist = dist;
+                closest = p;
+            }
+        }
+        return closest == player;
+    }
+}
+}

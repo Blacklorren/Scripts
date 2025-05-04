@@ -4,6 +4,9 @@ namespace HandballManager.Core
 {
     public static class SimConstants
     {
+        // --- Match Timing ---
+        public const float HALF_DURATION_SECONDS = 1800f; // 30 minutes per half
+
         // --- Jumping & Landing ---
         public const float BASE_JUMP_HEIGHT = 0.7f; // meters (average handball jump)
         public const float BASE_JUMP_DURATION = 0.6f; // seconds
@@ -64,6 +67,7 @@ namespace HandballManager.Core
         public const float PLAYER_STAMINA_LOW_THRESHOLD = 0.5f;
         public const float PLAYER_STAMINA_MIN_SPEED_FACTOR = 0.4f;
         public const int PLAYER_DEFAULT_ATTRIBUTE_VALUE = 50;
+        public const float PLAYER_DRIBBLING_SPEED_MULTIPLIER = 0.85f; // Speed multiplier when dribbling
 
         // --- Player Collision ---
         public const float PLAYER_COLLISION_RADIUS = 0.4f;
@@ -73,14 +77,49 @@ namespace HandballManager.Core
         // --- Stamina Constants ---
         public const float BASE_STAMINA_DRAIN_PER_SECOND = 0.002f;
         public const float SPRINT_STAMINA_MULTIPLIER = 2.5f;
+        public const float PLAYER_STAMINA_DRAIN_RATE = 0.05f; // Base drain per second at max intensity (from Sim)
+        public const float PLAYER_STAMINA_RECOVERY_RATE = 0.08f; // Recovery per second when idle (from Sim)
+        public const float PLAYER_STAMINA_POSSESSION_DRAIN_MULTIPLIER = 1.2f; // Multiplier for drain while holding ball (from Sim)
 
         // --- Pitch Dimensions ---
         public const float DEFAULT_PITCH_LENGTH = 40.0f;
         public const float DEFAULT_PITCH_WIDTH = 20.0f;
 
+        // --- Set Piece Rules ---
+        public const float SET_PIECE_DEFENDER_DISTANCE = 3.0f; // Minimum legal distance for defenders on set pieces
+
         // --- Stumble Mechanics ---
         public const float STUMBLE_DURATION = 0.5f;              // seconds players remain stumbling after a collision
         public const float STUMBLE_ACCELERATION_FACTOR = 0.5f;    // fraction of normal accel when stumbling
         public const float STUMBLE_SPEED_FACTOR = 0.5f;           // fraction of normal speed when stumbling
+
+        // --- Utility Functions ---
+        public static float CalculateMaxSpeed(float speedAttribute)
+        {
+            // Example calculation: Scale base max speed by attribute (e.g., 5-10 m/s range)
+            // Ensure speedAttribute is scaled appropriately (e.g., 0-100)
+            float minSpeed = 5.0f;
+            float maxSpeed = 10.0f;
+            // Use PLAYER_DEFAULT_MAX_SPEED? For now, keep the Sim logic.
+            return Mathf.Lerp(minSpeed, maxSpeed, Mathf.Clamp01(speedAttribute / 100f));
+        }
+
+        // --- AI Decision Modifiers (Moved from OffensiveAIController) ---
+        public const float BASE_ACTION_THRESHOLD = 0.35f;
+        public const float SHOT_PREP_TIME_BASE = 0.6f;
+        public const float SHOT_PREP_TIME_RANDOM_FACTOR = 0.3f;
+        public const float PASS_PREP_TIME_BASE = 0.4f;
+        public const float PASS_PREP_TIME_RANDOM_FACTOR = 0.2f;
+        public const float MIN_ACTION_TIMER = 0.5f;
+        // Phase Modifiers
+        public const float TRANSITION_DRIBBLE_MODIFIER = 1.3f;
+        public const float TRANSITION_PASS_MODIFIER = 1.15f;
+        public const float TRANSITION_SHOOT_MODIFIER = 1.15f;
+        public const float TRANSITION_COMPLEX_PASS_MODIFIER = 0.8f;
+        public const float TRANSITION_SCREEN_MODIFIER = 0.8f;
+        public const float TRANSITION_PREP_TIME_FACTOR = 0.85f;
+        public const float TRANSITION_ACTION_THRESHOLD_FACTOR = 0.85f;
+        public const float POSITIONAL_SCREEN_MODIFIER = 1.15f;
+        public const float POSITIONAL_FORMATION_PASS_MODIFIER = 1.1f;
     }
 }

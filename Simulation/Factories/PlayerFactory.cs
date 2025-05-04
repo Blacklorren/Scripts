@@ -34,9 +34,40 @@ namespace HandballManager.Simulation.Factories
         public PlayerData CreateFromDatabase(PlayerDatabaseEntry entry)
         {
             if (entry == null) throw new ArgumentNullException(nameof(entry));
-            var baseData = new BaseData
+
+            // Create PlayerData directly, assigning all properties from entry
+            var player = new PlayerData()
             {
-                // --- Technical Attributes ---
+                // --- Identifiers & Basic Info --- (Moved from old PlayerData initializer)
+                PlayerID = entry.PlayerID,
+                FirstName = entry.FirstName,
+                LastName = entry.LastName,
+                Age = entry.Age,
+                DateOfBirth = entry.DateOfBirth,
+                Nationality = entry.Nationality,
+                Reaction = entry.Reaction,
+
+                // --- Contract/Status --- (Moved from old PlayerData initializer)
+                CurrentTeamID = entry.CurrentTeamID,
+                ContractExpiryDate = entry.ContractExpiryDate,
+                Wage = entry.Wage,
+                Morale = entry.Morale,
+                Condition = entry.Condition,
+                CurrentInjuryStatus = entry.CurrentInjuryStatus,
+                InjuryReturnDate = entry.InjuryReturnDate,
+                InjuryDescription = entry.InjuryDescription,
+                TransferStatus = entry.TransferStatus,
+
+                // --- Position & Handedness --- (Moved from old PlayerData initializer)
+                PrimaryPosition = entry.PrimaryPosition,
+                PreferredHand = entry.ShootingHand, // Assign to the correct PlayerData property 'PreferredHand'
+                PositionalFamiliarity = entry.PositionalFamiliarity ?? new Dictionary<PlayerPosition, float>(),
+
+                // --- Traits & Personality --- (Moved from old PlayerData initializer)
+                Traits = entry.Traits ?? new List<string>(),
+                Personality = entry.Personality,
+
+                // --- Technical Attributes --- (From old BaseData initializer)
                 ShootingPower = entry.ShootingPower,
                 ShootingAccuracy = entry.ShootingAccuracy,
                 Passing = entry.Passing,
@@ -44,7 +75,8 @@ namespace HandballManager.Simulation.Factories
                 Technique = entry.Technique,
                 Tackling = entry.Tackling,
                 Blocking = entry.Blocking,
-                // --- Physical Attributes ---
+
+                // --- Physical Attributes --- (From old BaseData initializer)
                 Speed = entry.Speed,
                 Agility = entry.Agility,
                 Strength = entry.Strength,
@@ -52,7 +84,10 @@ namespace HandballManager.Simulation.Factories
                 Stamina = entry.Stamina,
                 NaturalFitness = entry.NaturalFitness,
                 Resilience = entry.Resilience,
-                // --- Mental Attributes ---
+                Height = entry.Height,
+                Weight = entry.Weight,
+
+                // --- Mental Attributes --- (From old BaseData initializer)
                 Aggression = entry.Aggression,
                 Bravery = entry.Bravery,
                 Composure = entry.Composure,
@@ -66,7 +101,8 @@ namespace HandballManager.Simulation.Factories
                 Leadership = entry.Leadership,
                 Positioning = entry.Positioning,
                 Determination = entry.Determination,
-                // --- Goalkeeping Attributes ---
+
+                // --- Goalkeeping Attributes --- (From old BaseData initializer)
                 Reflexes = entry.Reflexes,
                 Handling = entry.Handling,
                 PositioningGK = entry.PositioningGK,
@@ -74,44 +110,13 @@ namespace HandballManager.Simulation.Factories
                 PenaltySaving = entry.PenaltySaving,
                 Throwing = entry.Throwing,
                 Communication = entry.Communication,
-                // --- Potential & Hidden Attributes ---
+
+                // --- Potential & Hidden Attributes --- (From old BaseData initializer)
                 PotentialAbility = entry.PotentialAbility
             };
-            var player = new PlayerData(baseData)
-            {
-                // --- Identifiers ---
-                PlayerID = entry.PlayerID,
-                Reaction = entry.Reaction,
-                FirstName = entry.FirstName,
-                LastName = entry.LastName,
-                Age = entry.Age,
-                DateOfBirth = entry.DateOfBirth,
-                Nationality = entry.Nationality,
 
-                // --- Physical Attributes ---
-                Height = entry.Height,
-                Weight = entry.Weight,
-
-                // --- Contract/Status ---
-                CurrentTeamID = entry.CurrentTeamID,
-                ContractExpiryDate = entry.ContractExpiryDate,
-                Wage = entry.Wage,
-                Morale = entry.Morale,
-                Condition = entry.Condition,
-                CurrentInjuryStatus = entry.CurrentInjuryStatus,
-                InjuryReturnDate = entry.InjuryReturnDate,
-                InjuryDescription = entry.InjuryDescription,
-                TransferStatus = entry.TransferStatus,
-
-                // --- Position ---
-                PrimaryPosition = entry.PrimaryPosition,
-                ShootingHand = entry.ShootingHand,
-
-                // --- Traits ---
-                Traits = entry.Traits?.ToList() ?? new List<string>(),
-            };
             player.GeneratePersonality();
-            player.PositionalFamiliarity = GenerateInitialFamiliarity(entry.Position, player);
+            player.PositionalFamiliarity = GenerateInitialFamiliarity(player.PrimaryPosition, player);
             return player;
         }
 
@@ -151,10 +156,6 @@ namespace HandballManager.Simulation.Factories
                 DateOfBirth = GenerateBirthDate(age),
                 Nationality = nationality,
 
-                // --- Physical Attributes ---
-                Height = _random.Next(170, 200),
-                Weight = _random.Next(65, 100),
-
                 // --- Contract/Status ---
                 CurrentTeamID = null,
                 ContractExpiryDate = DateTime.Now.AddYears(2), // Example: 2-year contract
@@ -168,7 +169,7 @@ namespace HandballManager.Simulation.Factories
 
                 // --- Position ---
                 PrimaryPosition = primaryPosition,
-                ShootingHand = handedness,
+                PreferredHand = handedness, 
 
                 // --- Skills ---
                 Traits = new List<string>(), // Les traits seront générés juste après
@@ -303,142 +304,142 @@ namespace HandballManager.Simulation.Factories
         }
 
         // Génère une liste de traits cohérents en fonction du poste, du potentiel, etc.
-private List<string> GenerateTraits(PlayerData player)
-{
-    var traits = new List<string>();
-    if (player == null)
-        return traits;
-
-    // Exemples de logique simple
-    switch (player.PrimaryPosition)
-    {
-        case PlayerPosition.Goalkeeper:
-            traits.Add("Goalkeeper Specialist");
-            if (player.BaseData.Reflexes > 85) traits.Add("Quick Reflexes");
-            if (player.BaseData.PenaltySaving > 85) traits.Add("Penalty Saver");
-            break;
-        case PlayerPosition.LeftWing:
-        case PlayerPosition.RightWing:
-            traits.Add("Fast Runner");
-            if (player.BaseData.Agility > 85) traits.Add("Acrobat");
-            if (player.BaseData.ShootingAccuracy > 80) traits.Add("Sharp Shooter");
-            break;
-        case PlayerPosition.Pivot:
-            traits.Add("Target Man");
-            if (player.BaseData.Strength > 85) traits.Add("Strong Body");
-            if (player.BaseData.Positioning > 80) traits.Add("Space Finder");
-            break;
-        case PlayerPosition.LeftBack:
-        case PlayerPosition.RightBack:
-            traits.Add("Power Shooter");
-            if (player.BaseData.ShootingPower > 85) traits.Add("Long Shot");
-            break;
-        case PlayerPosition.CentreBack:
-            traits.Add("Playmaker");
-            if (player.BaseData.DecisionMaking > 85) traits.Add("Tactician");
-            if (player.BaseData.Leadership > 80) traits.Add("Leader");
-            break;
-        // Ajoute d'autres cas si besoin
-    }
-    // Traits génériques selon le potentiel
-    if (player.BaseData.PotentialAbility > 90) traits.Add("Wonderkid");
-    else if (player.BaseData.PotentialAbility > 80) traits.Add("High Potential");
-    // Un trait athlétique si la moyenne physique est élevée
-    var avgPhysical = (player.BaseData.Speed + player.BaseData.Agility + player.BaseData.Strength + player.BaseData.Jumping + player.BaseData.Stamina + player.BaseData.NaturalFitness + player.BaseData.Resilience) / 7.0;
-    if (avgPhysical > 80) traits.Add("Athletic");
-
-    // --- Personality-based traits ---
-    if (player.Ambition > 80) traits.Add("Highly Ambitious");
-    if (player.Determination > 80) traits.Add("Relentless");
-    if (player.Professionalism > 80) traits.Add("Model Professional");
-    if (player.Loyalty > 80) traits.Add("One Club Player");
-    if (player.Aggression > 80) traits.Add("Hot-Headed");
-    if (player.Volatility > 80) traits.Add("Mercurial");
-    if (player.Composure > 80) traits.Add("Ice Cold");
-    if (player.Leadership > 80) traits.Add("Locker Room Leader");
-    if (player.Teamwork > 80) traits.Add("Team Player");
-    if (player.Ambition < 40) traits.Add("Low Ambition");
-    if (player.Determination < 40) traits.Add("Inconsistent");
-    if (player.Professionalism < 40) traits.Add("Unprofessional");
-    if (player.Loyalty < 40) traits.Add("Journeyman");
-    if (player.Aggression < 40) traits.Add("Calm");
-    if (player.Composure < 40) traits.Add("Nervous");
-    if (player.Teamwork < 40) traits.Add("Individualist");
-
-    return traits;
-}
-
-
-// Génère une date de naissance réaliste à partir d'un âge (jour/mois aléatoire)
-private DateTime GenerateBirthDate(int age)
-{
-    // Année de naissance
-    int year = DateTime.Now.Year - age;
-    // Mois aléatoire
-    int month = _random.Next(1, 12);
-    // Jour aléatoire (en fonction du mois)
-    int day = _random.Next(1, DateTime.DaysInMonth(year, month) + 1);
-    return new DateTime(year, month, day);
-}
-
-// Vérifie la validité des bornes et la cohérence des attributs principaux
-private void ValidatePlayer(PlayerData player)
-{
-    if (player == null)
-        throw new ArgumentNullException(nameof(player));
-
-    // Vérifie les bornes des attributs principaux (1 à 99)
-    foreach (var prop in typeof(BaseData).GetFields())
-    {
-        if (prop.FieldType == typeof(int))
+        private List<string> GenerateTraits(PlayerData player)
         {
-            int value = (int)prop.GetValue(player.BaseData);
-            if (value < 1 || value > 99)
-                throw new Exception($"Attribut {prop.Name} hors bornes ({value}) pour le joueur {player.FirstName} {player.LastName}");
+            var traits = new List<string>();
+            if (player == null)
+                return traits;
+
+            // Exemples de logique simple
+            switch (player.PrimaryPosition)
+            {
+                case PlayerPosition.Goalkeeper:
+                    traits.Add("Goalkeeper Specialist");
+                    if (player.BaseData.Reflexes > 85) traits.Add("Quick Reflexes");
+                    if (player.BaseData.PenaltySaving > 85) traits.Add("Penalty Saver");
+                    break;
+                case PlayerPosition.LeftWing:
+                case PlayerPosition.RightWing:
+                    traits.Add("Fast Runner");
+                    if (player.BaseData.Agility > 85) traits.Add("Acrobat");
+                    if (player.BaseData.ShootingAccuracy > 80) traits.Add("Sharp Shooter");
+                    break;
+                case PlayerPosition.Pivot:
+                    traits.Add("Target Man");
+                    if (player.BaseData.Strength > 85) traits.Add("Strong Body");
+                    if (player.BaseData.Positioning > 80) traits.Add("Space Finder");
+                    break;
+                case PlayerPosition.LeftBack:
+                case PlayerPosition.RightBack:
+                    traits.Add("Power Shooter");
+                    if (player.BaseData.ShootingPower > 85) traits.Add("Long Shot");
+                    break;
+                case PlayerPosition.CentreBack:
+                    traits.Add("Playmaker");
+                    if (player.BaseData.DecisionMaking > 85) traits.Add("Tactician");
+                    if (player.BaseData.Leadership > 80) traits.Add("Leader");
+                    break;
+                // Ajoute d'autres cas si besoin
+            }
+            // Traits génériques selon le potentiel
+            if (player.BaseData.PotentialAbility > 90) traits.Add("Wonderkid");
+            else if (player.BaseData.PotentialAbility > 80) traits.Add("High Potential");
+            // Un trait athlétique si la moyenne physique est élevée
+            var avgPhysical = (player.BaseData.Speed + player.BaseData.Agility + player.BaseData.Strength + player.BaseData.Jumping + player.BaseData.Stamina + player.BaseData.NaturalFitness + player.BaseData.Resilience) / 7.0;
+            if (avgPhysical > 80) traits.Add("Athletic");
+
+            // --- Personality-based traits ---
+            if (player.Ambition > 80) traits.Add("Highly Ambitious");
+            if (player.Determination > 80) traits.Add("Relentless");
+            if (player.Professionalism > 80) traits.Add("Model Professional");
+            if (player.Loyalty > 80) traits.Add("One Club Player");
+            if (player.Aggression > 80) traits.Add("Hot-Headed");
+            if (player.Volatility > 80) traits.Add("Mercurial");
+            if (player.Composure > 80) traits.Add("Ice Cold");
+            if (player.Leadership > 80) traits.Add("Locker Room Leader");
+            if (player.Teamwork > 80) traits.Add("Team Player");
+            if (player.Ambition < 40) traits.Add("Low Ambition");
+            if (player.Determination < 40) traits.Add("Inconsistent");
+            if (player.Professionalism < 40) traits.Add("Unprofessional");
+            if (player.Loyalty < 40) traits.Add("Journeyman");
+            if (player.Aggression < 40) traits.Add("Calm");
+            if (player.Composure < 40) traits.Add("Nervous");
+            if (player.Teamwork < 40) traits.Add("Individualist");
+
+            return traits;
         }
-    }
-    // Vérifie les bornes des attributs de personnalité (1 à 99)
-    // Vérifie les bornes des attributs de personnalité (1 à 99)
-    var personalityProps = new[] { "Ambition", "Determination", "Aggression", "Volatility", "Professionalism", "Loyalty", "Composure", "Leadership", "Teamwork" };
-    foreach (var pname in personalityProps)
-    {
-        var prop = typeof(PlayerData).GetProperty(pname);
-        if (prop != null)
+
+
+        // Génère une date de naissance réaliste à partir d'un âge (jour/mois aléatoire)
+        private DateTime GenerateBirthDate(int age)
         {
-            int value = (int)prop.GetValue(player);
-            if (value < 1 || value > 99)
-                throw new Exception($"Attribut personnalité {pname} hors bornes ({value}) pour le joueur {player.FirstName} {player.LastName}");
+            // Année de naissance
+            int year = DateTime.Now.Year - age;
+            // Mois aléatoire
+            int month = _random.Next(1, 12);
+            // Jour aléatoire (en fonction du mois)
+            int day = _random.Next(1, DateTime.DaysInMonth(year, month) + 1);
+            return new DateTime(year, month, day);
         }
-    }
-    // Optionally: enforce trait/attribute consistency
-    if (player.Personality == PlayerPersonalityTrait.Ambitious && player.Ambition < 70)
-        throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Ambitious mais une ambition trop basse ({player.Ambition})");
-    if (player.Personality == PlayerPersonalityTrait.Determined && player.Determination < 70)
-        throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Determined mais une determination trop basse ({player.Determination})");
-    if (player.Personality == PlayerPersonalityTrait.Professional && player.Professionalism < 70)
-        throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Professional mais un professionnalisme trop bas ({player.Professionalism})");
-    if (player.Personality == PlayerPersonalityTrait.Loyal && player.Loyalty < 70)
-        throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Loyal mais une loyauté trop basse ({player.Loyalty})");
 
-    // Cohérence métier selon le poste
-    switch (player.PrimaryPosition)
-    {
-        case PlayerPosition.Goalkeeper:
-            if (player.BaseData.Reflexes < 60)
-                throw new Exception("Gardien avec réflexes trop faibles !");
-            if (player.BaseData.Handling < 60)
-                throw new Exception("Gardien avec handling trop faible !");
-            break;
-        case PlayerPosition.LeftWing:
-        case PlayerPosition.RightWing:
-            if (player.BaseData.Speed < 60)
-                throw new Exception("Ailier trop lent !");
-            break;
-        // Ajoute d'autres règles si besoin
-    }
-}
+        // Vérifie la validité des bornes et la cohérence des attributs principaux
+        private void ValidatePlayer(PlayerData player)
+        {
+            if (player == null)
+                throw new ArgumentNullException(nameof(player));
 
-// Helper for wage calculation
+            // Vérifie les bornes des attributs principaux (1 à 99)
+            foreach (var prop in typeof(BaseData).GetFields())
+            {
+                if (prop.FieldType == typeof(int))
+                {
+                    int value = (int)prop.GetValue(player.BaseData);
+                    if (value < 1 || value > 99)
+                        throw new Exception($"Attribut {prop.Name} hors bornes ({value}) pour le joueur {player.FirstName} {player.LastName}");
+                }
+            }
+            // Vérifie les bornes des attributs de personnalité (1 à 99)
+            // Vérifie les bornes des attributs de personnalité (1 à 99)
+            var personalityProps = new[] { "Ambition", "Determination", "Aggression", "Volatility", "Professionalism", "Loyalty", "Composure", "Leadership", "Teamwork" };
+            foreach (var pname in personalityProps)
+            {
+                var prop = typeof(PlayerData).GetProperty(pname);
+                if (prop != null)
+                {
+                    int value = (int)prop.GetValue(player);
+                    if (value < 1 || value > 99)
+                        throw new Exception($"Attribut personnalité {pname} hors bornes ({value}) pour le joueur {player.FirstName} {player.LastName}");
+                }
+            }
+            // Optionally: enforce trait/attribute consistency
+            if (player.Personality == PlayerPersonalityTrait.Ambitious && player.Ambition < 70)
+                throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Ambitious mais une ambition trop basse ({player.Ambition})");
+            if (player.Personality == PlayerPersonalityTrait.Determined && player.Determination < 70)
+                throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Determined mais une determination trop basse ({player.Determination})");
+            if (player.Personality == PlayerPersonalityTrait.Professional && player.Professionalism < 70)
+                throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Professional mais un professionnalisme trop bas ({player.Professionalism})");
+            if (player.Personality == PlayerPersonalityTrait.Loyal && player.Loyalty < 70)
+                throw new Exception($"Joueur {player.FirstName} {player.LastName} a le trait Loyal mais une loyauté trop basse ({player.Loyalty})");
+
+            // Cohérence métier selon le poste
+            switch (player.PrimaryPosition)
+            {
+                case PlayerPosition.Goalkeeper:
+                    if (player.BaseData.Reflexes < 60)
+                        throw new Exception("Gardien avec réflexes trop faibles !");
+                    if (player.BaseData.Handling < 60)
+                        throw new Exception("Gardien avec handling trop faible !");
+                    break;
+                case PlayerPosition.LeftWing:
+                case PlayerPosition.RightWing:
+                    if (player.BaseData.Speed < 60)
+                        throw new Exception("Ailier trop lent !");
+                    break;
+                // Ajoute d'autres règles si besoin
+            }
+        }
+
+        // Helper for wage calculation
         private float CalculateYouthWage(int age, int potential, int currentAbility)
         {
             // Example formula: base + (potential * factor1) + (currentAbility * factor2) - (age * factor3)
@@ -474,8 +475,8 @@ private void ValidatePlayer(PlayerData player)
             // Handedness is always enforced for wings/backs.
 
             var secondaries = new List<PlayerPosition>();
-            bool isRight = player.ShootingHand == Handedness.Right || player.ShootingHand == Handedness.Both;
-            bool isLeft = player.ShootingHand == Handedness.Left || player.ShootingHand == Handedness.Both;
+            bool isRight = player.PreferredHand == Handedness.Right || player.PreferredHand == Handedness.Both;
+            bool isLeft = player.PreferredHand == Handedness.Left || player.PreferredHand == Handedness.Both;
             float threshold = 0.85f; // Moderate fit threshold
 
             // Helper to compute weighted fit (relative to player's own ability)

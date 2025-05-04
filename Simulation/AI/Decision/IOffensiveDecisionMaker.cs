@@ -2,6 +2,7 @@ using HandballManager.Data;
 using HandballManager.Gameplay;
 using HandballManager.Simulation.AI.Positioning;
 using HandballManager.Simulation.Engines;
+using UnityEngine;
 
 namespace HandballManager.Simulation.AI.Decision
 {
@@ -9,6 +10,16 @@ namespace HandballManager.Simulation.AI.Decision
     /// Consolidated interface for offensive decision making in the AI system.
     /// Combines the functionality of the former IPassingDecisionMaker and IShootingDecisionMaker interfaces.
     /// </summary>
+    public struct ScreenDecisionData
+    {
+        public SimPlayer Screener;
+        public SimPlayer User; // Player using the screen
+        public SimPlayer Defender; // Defender being screened
+        public Vector2 ScreenSpot;
+        public bool ShouldSetScreen; // Added flag
+        public float EffectivenessAngle; // Added angle
+    }
+
     public interface IOffensiveDecisionMaker
     {
         /// <summary>
@@ -31,51 +42,7 @@ namespace HandballManager.Simulation.AI.Decision
         /// <param name="context">The current AI context containing game state and player information.</param>
         /// <returns>A decision result containing the dribble decision details.</returns>
         DecisionResult MakeDribbleDecision(PlayerAIContext context);
-    }
-    
-    /// <summary>
-    /// Represents the result of an AI decision.
-    /// </summary>
-    public class DecisionResult
-    {
-        /// <summary>
-        /// Gets or sets whether the decision was successful.
-        /// </summary>
-        public bool IsSuccessful { get; set; }
-        
-        /// <summary>
-        /// Gets or sets the confidence level of the decision (0.0 to 1.0).
-        /// </summary>
-        public float Confidence { get; set; }
-        
-        /// <summary>
-        /// Gets or sets additional data related to the decision.
-        /// </summary>
-        public object Data { get; set; }
-    }
-    
-    /// <summary>
-    /// Context information provided to AI decision makers.
-    /// </summary>
-    public class PlayerAIContext
-    {
-        /// <summary>
-        /// Gets or sets the tactic positioner for tactical/screening decisions.
-        /// </summary>
-        public ITacticPositioner TacticPositioner { get; set; }
-        /// <summary>
-        /// Gets or sets the current match state.
-        /// </summary>
-        public MatchState MatchState { get; set; }
-        
-        /// <summary>
-        /// Gets or sets the player making the decision.
-        /// </summary>
-        public SimPlayer Player { get; set; }
-        
-        /// <summary>
-        /// Gets or sets the current tactical setup.
-        /// </summary>
-        public Tactic Tactics { get; set; }
+
+        ScreenDecisionData? EvaluateScreenOpportunity(PlayerAIContext context);
     }
 }

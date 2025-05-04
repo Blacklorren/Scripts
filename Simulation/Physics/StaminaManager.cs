@@ -77,8 +77,14 @@ namespace HandballManager.Simulation.Physics
 
             player.Stamina = Mathf.Clamp01(player.Stamina - staminaDrain + staminaRecovery);
             player.UpdateEffectiveSpeed(); // Always update, let the method handle thresholds
-            
-            // Remove the conditional speed reset here
+
+            // --- Logging ---
+            Debug.Log($"[Stamina] Player {player.BaseData.FullName} | Effort: {currentEffort:F2} | IsSprinting: {isSprinting} | Drain: {staminaDrain:F4} | Recovery: {staminaRecovery:F4} | New Stamina: {player.Stamina:F3}");
+            if (player.Stamina < 0.1f)
+                Debug.LogWarning($"[Stamina] Player {player.BaseData.FullName} stamina critically low: {player.Stamina:F2}");
+            if (player.Stamina > 0.99f)
+                Debug.Log($"[Stamina] Player {player.BaseData.FullName} stamina fully recovered.");
+            // --- End Logging ---
         }
         // --- Non-linear Utility Functions ---
         /// <summary>

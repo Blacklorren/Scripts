@@ -64,7 +64,7 @@ namespace HandballManager.Simulation.Utils
             float minDistSq = float.MaxValue;
             foreach (var other in state.AllPlayers.Values)
             {
-                if (other == player || other.TeamSimId == player.TeamSimId)
+                if (other == player || other.TeamId == player.TeamId)
                     continue;
                 float distSq = (other.Position - playerPos).sqrMagnitude;
                 if (distSq < minDistSq)

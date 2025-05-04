@@ -1,4 +1,5 @@
 using UnityEngine;
+using System;
 using HandballManager.Core;
 using HandballManager.Simulation.Engines;
 using HandballManager.Simulation.Utils;
@@ -49,12 +50,16 @@ namespace HandballManager.Simulation.Physics
         private readonly TurnoverHandler _turnoverHandler;
         private readonly ITacticPositioner _tacticPositioner;
 
+        // Delegate for notifying attacking intent
+        private Action _attackingIntentHandler;
+
         /// <summary>
         /// Handles player acceleration, deceleration, and inertia.
         /// </summary>
-        public PlayerPhysicsEngine(TurnoverHandler turnoverHandler, IGeometryProvider geometry = null, IMatchEventHandler eventHandler = null, StaminaManager staminaManager = null, ITacticPositioner tacticPositioner = null)
+        public PlayerPhysicsEngine(TurnoverHandler turnoverHandler, IGeometryProvider geometry = null, IMatchEventHandler eventHandler = null, StaminaManager staminaManager = null, ITacticPositioner tacticPositioner = null, Action attackingIntentHandler = null)
         {
             _turnoverHandler = turnoverHandler;
+            _attackingIntentHandler = attackingIntentHandler;
             _geometry = geometry;
             _eventHandler = eventHandler;
             _staminaManager = staminaManager;
@@ -95,7 +100,7 @@ namespace HandballManager.Simulation.Physics
         /// </summary>
         private static bool IsAllowedZoneEntryContext(SimPlayer player, MatchState state, bool isAttacking, bool isDefending)
         {
-            return player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea;
+            return player.CurrentAction == PlayerAction.JumpingForShot && player.JumpOriginatedOutsideGoalArea;
         }
 
         /// <summary>
@@ -109,7 +114,7 @@ namespace HandballManager.Simulation.Physics
             if (Vector2.Dot(tangent, player.Velocity) < 0)
                 tangent = -tangent;
             player.Velocity = tangent * player.Velocity.magnitude;
-            player.Velocity += fromGoal * player.Velocity.magnitude * 0.2f;
+            player.Velocity += new Vector3(fromGoal.x, 0f, fromGoal.y) * player.Velocity.magnitude * 0.2f;
         }
 
         public void ApplyAcceleration(SimPlayer player, Vector2 targetVelocity, bool allowSprint, bool applyArrivalSlowdown, float deltaTime)
@@ -179,7 +184,7 @@ namespace HandballManager.Simulation.Physics
             Vector2 appliedAcceleration = Vector2.ClampMagnitude(requiredAcceleration, maxAccelerationMagnitude);
             if (player.IsStumbling)
                 appliedAcceleration *= SimConstants.STUMBLE_ACCELERATION_FACTOR;
-            player.Velocity += appliedAcceleration * deltaTime;
+            player.Velocity += new Vector3(appliedAcceleration.x, 0, appliedAcceleration.y) * deltaTime;
 
             // Clamp final velocity to prevent excessive speed
             float maxAllowedSpeed = player.EffectiveSpeed * PLAYER_MAX_SPEED_OVERSHOOT_FACTOR;
@@ -206,23 +211,22 @@ namespace HandballManager.Simulation.Physics
             {
                 case PlayerAction.MovingToPosition:
                 case PlayerAction.MovingWithBall:
-                case PlayerAction.ChasingBall:
-                case PlayerAction.MarkingPlayer:
+                case PlayerAction.DefendingPlayer:
                 case PlayerAction.ReceivingPass:
-                case PlayerAction.AttemptingIntercept:
-                case PlayerAction.AttemptingBlock:
-                case PlayerAction.GoalkeeperPositioning:
+                case PlayerAction.Intercepting:
+                case PlayerAction.Blocking:
+                // case PlayerAction.GoalkeeperPositioning: // Removed: not present in PlayerAction enum
                     Vector2 direction = (player.TargetPosition - player.Position);
                     if (direction.sqrMagnitude > MIN_DISTANCE_CHECK_SQ)
                     {
                         targetVelocity = direction.normalized * player.EffectiveSpeed;
                     }
-                    allowSprint = player.AssignedTacticalRole != PlayerPosition.Goalkeeper && player.CurrentAction != PlayerAction.AttemptingBlock;
+                    allowSprint = player.AssignedTacticalRole != PlayerPosition.Goalkeeper && player.CurrentAction != PlayerAction.Blocking;
                     break;
 
                 case PlayerAction.PreparingPass:
                 case PlayerAction.PreparingShot:
-                case PlayerAction.AttemptingTackle:
+                case PlayerAction.Tackling:
                     targetVelocity = Vector2.zero;
                     applyArrivalSlowdown = false;
                     break;
@@ -240,6 +244,35 @@ namespace HandballManager.Simulation.Physics
         /// </summary>
         public void UpdatePlayersMovement(MatchState state, float deltaTime)
         {
+            // --- Attacking intent detection ---
+            bool attackingIntentDetected = false;
+            Vector2 opponentGoal = _geometry.GetGoalCenter(state.PossessionTeamId == 0 ? 1 : 0);
+            foreach (var player in state.PlayersOnCourt)
+            {
+                if (player == null || player.SuspensionTimer > 0) continue;
+                // Only consider attacking players
+                if (player.TeamSimId == state.PossessionTeamId)
+                {
+                    // Player must be moving significantly
+                    if (player.Velocity.magnitude > 1.0f) // 1 m/s threshold for 'clear' movement
+                    {
+                        Vector2 toGoal = (opponentGoal - player.Position).normalized;
+                        float dot = Vector2.Dot(player.Velocity.normalized, toGoal);
+                        if (dot > 0.7f) // Moving mostly towards goal (within ~45 degrees)
+                        {
+                            attackingIntentDetected = true;
+                            break; // Only need one per frame
+                        }
+                    }
+                }
+            }
+            
+            // Notify the PassivePlayManager if attacking intent is detected (via delegate)
+            if (attackingIntentDetected && _attackingIntentHandler != null)
+            {
+                _attackingIntentHandler.Invoke();
+            }
+
             if(state.PlayersOnCourt == null) return;
 
             const float STEP_THRESHOLD = 0.25f; // meters, adjust as needed
@@ -250,10 +283,15 @@ namespace HandballManager.Simulation.Physics
                 player.UpdateJumpRecovery(deltaTime);
                 player.UpdateStumble(deltaTime);
 
+                // Get tactical target position
+                Vector2 tacticalTargetPosition = _tacticPositioner.GetPlayerTargetPosition(state, player);
+                player.TargetPosition = tacticalTargetPosition; // Set the target for physics calculations (like arrival slowdown)
+
                 Vector2 previousPosition = player.Position;
+                // Calculate desired velocity based on current action/state (might override tactical positioning temporarily)
                 Vector2 targetVelocity = CalculateActionTargetVelocity(player, out bool allowSprint, out bool applyArrivalSlowdown);
                 ApplyAcceleration(player, targetVelocity, allowSprint, applyArrivalSlowdown, deltaTime);
-                player.Position += player.Velocity * deltaTime;
+                player.Position += new Vector2(player.Velocity.x, player.Velocity.y) * deltaTime;
 
                 // --- Stamina System: Update stamina based on movement ---
                 // --- Stamina System: Update stamina based on match progression ---
@@ -262,7 +300,8 @@ namespace HandballManager.Simulation.Physics
                 float recoveryMultiplier = Mathf.Lerp(1.0f, 0.5f, matchProgress); // down to 0.5x at end
 
                 Debug.Log($"[StaminaMult] Time: {state.MatchTimeSeconds:F1}/{state.MatchDurationSeconds:F1} ({matchProgress:P1}) | Accum: {accumulationMultiplier:F2}, Recov: {recoveryMultiplier:F2}");
-                player.UpdateStamina(deltaTime, player.HasBall);
+                // Update player stamina - method only takes deltaTime parameter
+                player.UpdateStamina(deltaTime);
 
                 // --- Goal Area Violation Enforcement (Handball 6m Zone Rules) ---
                 bool inGoalArea = IsInGoalArea(player.Position, player.TeamSimId, _geometry);
@@ -312,7 +351,7 @@ namespace HandballManager.Simulation.Physics
                 // --- Aerial Play Violation: Attacker lands in 6m zone with ball ---
                 // Detect landing event
                 bool wasJumping = player.JumpOrigin != null;
-                bool isJumping = player.CurrentAction == PlayerAction.Jumping;
+                bool isJumping = player.CurrentAction == PlayerAction.JumpingForShot;
                 if (isAttacking && wasJumping && !isJumping && player.JumpOriginatedOutsideGoalArea && inGoalArea && player.HasBall)
                 {
                     // Attacker landed in 6m zone with ball after jump: turnover
@@ -326,42 +365,35 @@ namespace HandballManager.Simulation.Physics
                 {
                     // --- Double Dribble Detection ---
                     // If player attempts to start dribbling again after already dribbling since possession
-                    if (player.HasBall && player.WantsToDribble) // You may need to replace WantsToDribble with the actual intent flag
+                    if (player.HasBall && player.IsDribbling) // You may need to replace WantsToDribble with the actual intent flag
                     {
-                        if (pdata.IsDribbling)
+                        if (player.IsDribbling)
                         {
                             // Already dribbling, continue
                         }
-                        else if (pdata.HasDribbledSincePossession)
+                        else if (player.HasDribbledSincePossession) // Use SimPlayer instance
                         {
                             // Double dribble detected
                             _turnoverHandler?.Invoke(player, state, "Double Dribble");
                         }
                         else
                         {
-                            pdata.StartDribble();
+                            player.StartDribble(); // Call on SimPlayer, not PlayerData
                         }
                     }
                     // --- Step Counting ---
-                    if (player.HasBall && !pdata.IsDribbling)
+                    if (player.HasBall && !player.IsDribbling)
                     {
-                        pdata.TryIncrementStep(player.Position);
-                        if (pdata.ExceededStepLimit())
+                        player.TryIncrementStep(player.Position); // Use SimPlayer instance
+                        if (player.ExceededStepLimit()) // Use SimPlayer instance
                         {
+                            Debug.Log($"[Violation] Steps violation by Player ID: {player.BaseData.PlayerID}");
                             _turnoverHandler?.Invoke(player, state, "Step Violation");
                         }
                     }
-                    // Reset steps and dribble state on possession loss
-                    if (!player.HasBall)
-                    {
-                        pdata.LosePossession();
-                    }
-
-                    // If just gained possession, call StartPossession with position
-                    if (!pdata.HasBall && player.HasBall)
-                    {
-                        pdata.StartPossession(player.Position);
-                    }
+                    // Possession state is already handled by SimPlayer.HasBall
+                    // No need to update PlayerData separately as these methods don't exist there
+                    // The SimPlayer object already tracks possession state
 
                     // --- Jumping Mechanics Update ---
                     // Track jump state transitions for zone logic

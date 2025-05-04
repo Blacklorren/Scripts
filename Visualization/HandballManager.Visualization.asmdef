@@ -1,0 +1,17 @@
+{
+    "name": "HandballManager.Visualization",
+    "rootNamespace": "",
+    "references": [
+        "GUID:47605065c65db0e46bdad3b03c04de7b",
+        "GUID:682841d05faa25e46a3827fd2b5fd342"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

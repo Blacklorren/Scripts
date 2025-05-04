@@ -1,0 +1,99 @@
+=== Étapes de Configuration de l'Interface Utilisateur dans Unity pour UIManager ===
+
+Ce fichier décrit les étapes pour configurer les éléments d'interface utilisateur (UI) nécessaires au script UIManager.cs dans l'éditeur Unity. Ces étapes sont destinées aux débutants.
+
+**Prérequis:**
+*   Le script `UIManager.cs` existe dans votre projet (dans `Assets/Scripts/UI/`).
+*   Vous avez une scène ouverte dans l'éditeur Unity.
+
+**Étapes:**
+
+1.  **Créer un Canvas (Zone d'Affichage UI):**
+    *   Dans la fenêtre `Hierarchy` (généralement à gauche), faites un clic droit.
+    *   Allez dans `UI` -> `Canvas`. Un objet `Canvas` et un `EventSystem` seront créés. Le Canvas est la zone où tous vos éléments d'UI vont vivre.
+
+2.  **Créer le Panneau d'Information du Match (MatchInfoPanel):**
+    *   Faites un clic droit sur l'objet `Canvas` dans la `Hierarchy`.
+    *   Allez dans `UI` -> `Panel`. Un objet `Panel` sera créé comme enfant du `Canvas`.
+    *   Sélectionnez ce nouvel objet `Panel`. Dans la fenêtre `Inspector` (généralement à droite), renommez-le en `MatchInfoPanel`. Ce sera le conteneur pour les informations du match.
+
+3.  **Ajouter les Textes d'Information:**
+    *   Faites un clic droit sur `MatchInfoPanel` dans la `Hierarchy`.
+    *   Allez dans `UI` -> `Text - TextMeshPro`. Si c'est la première fois que vous utilisez TextMeshPro, Unity vous demandera d'importer les ressources essentielles. Cliquez sur "Import TMP Essentials".
+    *   Créez les éléments de texte suivants comme enfants de `MatchInfoPanel`:
+        *   Un texte pour l'heure: Renommez-le `TimeText`.
+        *   Un texte pour le score domicile: Renommez-le `HomeScoreText`.
+        *   Un texte pour le score extérieur: Renommez-le `AwayScoreText`.
+        *   Un texte pour le nom de l'équipe domicile: Renommez-le `HomeTeamNameText`.
+        *   Un texte pour le nom de l'équipe extérieur: Renommez-le `AwayTeamNameText`.
+    *   Positionnez et stylisez ces éléments de texte comme vous le souhaitez à l'intérieur du `MatchInfoPanel` en utilisant l'`Inspector` et l'outil `Rect Tool` (touche T).
+
+4.  **Ajouter l'Indicateur de Possession (PossessionIndicator):**
+    *   Faites un clic droit sur `MatchInfoPanel` dans la `Hierarchy`.
+    *   Allez dans `UI` -> `Image`.
+    *   Sélectionnez ce nouvel objet `Image`. Dans l'`Inspector`, renommez-le `PossessionIndicator`.
+    *   Positionnez cette image où vous voulez qu'elle apparaisse (par exemple, entre les scores). Vous pouvez lui laisser l'image par défaut (un carré blanc) pour l'instant, car le script changera sa couleur.
+
+5.  **Créer un GameObject pour le Manager:**
+    *   Dans la fenêtre `Hierarchy`, faites un clic droit dans une zone vide (pas sur un autre objet).
+    *   Choisissez `Create Empty`.
+    *   Sélectionnez ce nouvel objet `GameObject`. Dans l'`Inspector`, renommez-le `UIManagerObject` (ou un nom similaire).
+
+6.  **Attacher le Script UIManager:**
+    *   Sélectionnez l'objet `UIManagerObject` dans la `Hierarchy`.
+    *   Dans l'`Inspector`, cliquez sur le bouton `Add Component`.
+    *   Recherchez `UIManager` et sélectionnez-le pour l'ajouter au GameObject.
+
+7.  **Assigner les Éléments UI au Script dans l'Inspector:**
+    *   Assurez-vous que `UIManagerObject` est toujours sélectionné.
+    *   Dans l'`Inspector`, vous verrez les champs publics du script `UIManager` (Match Info Panel Elements).
+    *   Faites glisser chaque élément UI depuis la fenêtre `Hierarchy` vers le champ correspondant dans l'`Inspector`:
+        *   Glissez `MatchInfoPanel` (le Panel créé à l'étape 2) sur le champ `Match Info Panel`.
+        *   Glissez `TimeText` sur le champ `Time Text`.
+        *   Glissez `HomeScoreText` sur le champ `Home Score Text`.
+        *   Glissez `AwayScoreText` sur le champ `Away Score Text`.
+        *   Glissez `HomeTeamNameText` sur le champ `Home Team Name Text`.
+        *   Glissez `AwayTeamNameText` sur le champ `Away Team Name Text`.
+        *   Glissez `PossessionIndicator` (l'Image créée à l'étape 4) sur le champ `Possession Indicator`.
+    *   Vous pouvez aussi ajuster les couleurs (`Home Possession Color`, `Away Possession Color`, `Neutral Possession Color`) dans l'Inspector si vous le souhaitez.
+
+**Étapes pour configurer l'interface Tactiques dans Unity**
+
+Bonjour ! Voici les étapes pour mettre en place la nouvelle fenêtre qui permettra de changer les tactiques pendant les pauses du match. C'est un peu technique, mais on va y aller doucement.
+
+1.  **Créer la Fenêtre (le Panel) :**
+    *   Dans la fenêtre "Hierarchy" d'Unity (souvent à gauche), fais un clic droit dans un espace vide.
+    *   Va dans "UI" -> "Panel". Cela crée un nouveau rectangle semi-transparent dans ta vue "Scene" et "Game". C'est la base de notre fenêtre de tactique.
+    *   Donne-lui un nom clair, par exemple "TacticsPanel" en le sélectionnant et en changeant son nom dans la fenêtre "Inspector" (souvent à droite).
+
+2.  **Ajouter les Contrôles (Boutons, Listes, Sliders) :**
+    *   Sélectionne ton "TacticsPanel" dans la "Hierarchy".
+    *   Fais un clic droit dessus -> "UI" -> "TextMeshPro - Dropdown". C'est une liste déroulante. On en a besoin pour "DefensiveSystem", "Pace", et "FocusPlay". Crée-en trois et nomme-les (dans l'Inspector) par exemple "DefensiveSystemDropdown", "PaceDropdown", "FocusPlayDropdown".
+    *   Fais un clic droit sur "TacticsPanel" -> "UI" -> "Slider". C'est une barre de défilement. On en a besoin pour "TeamAggressionLevel" et "DefensiveLineHeight". Crée-en deux et nomme-les "TeamAggressionSlider", "DefensiveLineSlider".
+    *   (Optionnel) Tu peux ajouter du texte pour afficher la valeur des sliders : Clic droit sur "TacticsPanel" -> "UI" -> "TextMeshPro - Text". Crée-en deux et nomme-les "TeamAggressionValueText", "DefensiveLineValueText".
+    *   (Optionnel) Ajoute des labels (Text) pour indiquer à quoi correspond chaque contrôle (par exemple, un texte "Système Défensif :" à côté du dropdown correspondant).
+    *   Organise ces éléments sur ton "TacticsPanel" dans la vue "Scene" pour que ce soit joli et compréhensible.
+
+3.  **Attacher le Script `TacticsPanel.cs` :**
+    *   Sélectionne ton GameObject "TacticsPanel" dans la "Hierarchy".
+    *   Dans l'Inspector, clique sur "Add Component".
+    *   Cherche "TacticsPanel" et sélectionne le script que nous avons créé. Il apparaît maintenant comme une section dans l'Inspector.
+
+4.  **Relier les Contrôles au Script :**
+    *   Le composant "Tactics Panel (Script)" que tu viens d'ajouter a des champs vides (Defensive System Dropdown, Pace Dropdown, Team Aggression Slider, etc.).
+    *   Clique sur le petit cercle à droite de chaque champ ou fais glisser les objets correspondants (que tu as créés à l'étape 2) depuis la "Hierarchy" jusque dans ces champs. Par exemple, fais glisser "DefensiveSystemDropdown" de la Hierarchy vers le champ "Defensive System Dropdown" du script.
+    *   Fais ça pour tous les dropdowns, sliders et textes que tu as créés.
+
+5.  **Relier le `TacticsPanel` au `UIManager` :**
+    *   Trouve le GameObject dans ta scène qui a le script "UIManager" (il s'appelle peut-être "UIManager" ou "Canvas" ou autre). Sélectionne-le.
+    *   Dans l'Inspector, cherche le composant "Ui Manager (Script)". Il devrait maintenant avoir un champ nommé "Tactics Adjustment Panel".
+    *   Fais glisser ton GameObject "TacticsPanel" depuis la "Hierarchy" jusque dans ce champ "Tactics Adjustment Panel".
+
+6.  **(Code - Important mais déjà fait en partie)** Vérifier la logique dans `GameManager.cs` :
+    *   Assure-toi que le code dans `GameManager.cs` identifie correctement l'équipe du joueur humain pendant une pause (`_currentMatchStateForUI.HomeTeam` était un exemple, il faudra peut-être une logique plus précise comme `_currentMatchStateForUI.HomeTeam.IsHumanControlled`).
+    *   Vérifie que les noms des états de pause (`GameState.Paused`, `GameState.Timeout`, `GameState.HalfTime`) correspondent bien à ceux définis dans ton énumération `GameState`.
+
+Voilà ! Après ces étapes, la fenêtre de tactique devrait apparaître pendant les pauses du match et te permettre de modifier les réglages de ton équipe. N'hésite pas si tu bloques sur une étape !
+
+**Conclusion:**
+Votre interface utilisateur est maintenant configurée ! Le script `UIManager` attaché à `UIManagerObject` peut maintenant trouver et contrôler les éléments de texte et l'image que vous avez assignés pour afficher les informations du match. N'oubliez pas qu'un autre script (comme un `GameManager`) devra appeler la fonction `UpdateMatchInfo` du `UIManager` pour que l'affichage se mette à jour pendant le jeu.

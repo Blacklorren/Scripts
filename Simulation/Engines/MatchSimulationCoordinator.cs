@@ -14,6 +14,7 @@ namespace HandballManager.Simulation.Engines
     /// </summary>
     public class MatchSimulationCoordinator : MonoBehaviour, IMatchSimulationCoordinator
     {
+        public MatchSimulator CurrentSimulator => _engine as MatchSimulator;
         // Injected dependencies
         private IMatchEngine _engine;
         private IPlayerAIService _aiService;

@@ -17,6 +17,7 @@ namespace HandballManager.Data
         public int FoulsCommitted = 0;
         public int YellowCards = 0;
         public int TwoMinuteSuspensions = 0;
+        public int PenaltiesWon = 0; // Number of penalties won by the player
         public int RedCards = 0;
         public int BlocksMade = 0;
         public int Interceptions = 0;

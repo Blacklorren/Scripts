@@ -73,7 +73,7 @@ namespace HandballManager.Simulation.Events.Calculators
                 if (defender == null || defender.BaseData == null || defender.BaseData.CurrentInjuryStatus != InjuryStatus.Healthy)
                     continue;
                 // Only consider defenders actively attempting a block
-                if (defender.CurrentAction != PlayerAction.AttemptingBlock)
+                if (defender.CurrentAction != PlayerAction.Blocking)
                     continue;
                 Vector2 defenderPos2D = defender.Position;
                 Vector2 shotOrigin2D = new(shotOrigin.x, shotOrigin.z);
@@ -126,13 +126,13 @@ namespace HandballManager.Simulation.Events.Calculators
                     workRate * 0.05f +
                     determination * 0.05f; // All attributes above contribute to block probability
 
-                float deceptionPenalty = Mathf.Clamp01(shotDeception / 100f) * 0.25f;
-                float anglePenalty = 1f - angleCos;
-                float distPenalty = Mathf.Clamp01(dist / BLOCK_RADIUS) * 0.2f;
                 float baseProb = blockScore / 100f;
-                float timingBonus = (timingCat == BlockTimingCategory.Perfect) ? 0.15f : (timingCat == BlockTimingCategory.Early ? -0.07f : (timingCat == BlockTimingCategory.Late ? -0.12f : 0f));
-                float jumpBonus = isJumpingBlock ? JUMP_HEIGHT_BONUS : 0f;
-                float blockProb = baseProb + timingBonus + jumpBonus - deceptionPenalty - anglePenalty - distPenalty;
+                // Refined block probability: include vertical alignment, timing, and jump factors
+                float verticalDiff = Mathf.Abs(defenderVertical - shotHeight);
+                float alignMod = Mathf.Clamp01(1f - verticalDiff / (defender.BaseData.Height / 100f + VERTICAL_BLOCK_TOLERANCE));
+                float timingFactor = timingCat == BlockTimingCategory.Perfect ? 1.2f : (timingCat == BlockTimingCategory.Early ? 0.9f : (timingCat == BlockTimingCategory.Late ? 0.8f : 1f));
+                float jumpFactor = isJumpingBlock ? (1f + JUMP_HEIGHT_BONUS) : 1f;
+                float blockProb = (baseProb * alignMod * timingFactor * jumpFactor) - Mathf.Clamp01(shotDeception / 100f) * 0.25f - (1f - angleCos) - Mathf.Clamp01(dist / BLOCK_RADIUS) * 0.2f;
                 blockProb = Mathf.Clamp01(blockProb);
                 // Foul risk
                 float foulChance = FOUL_BASE_CHANCE;

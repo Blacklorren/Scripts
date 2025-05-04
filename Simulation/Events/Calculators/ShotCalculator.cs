@@ -3,6 +3,7 @@ using HandballManager.Simulation.Utils;
 using HandballManager.Simulation.Physics;
 using UnityEngine;
 using HandballManager.Core;
+using HandballManager.Simulation.AI.Evaluation; // Added for IGameStateEvaluator dependency
 
 namespace HandballManager.Simulation.Events.Calculators
 {
@@ -23,14 +24,24 @@ namespace HandballManager.Simulation.Events.Calculators
         public ShotCalculator(BlockCalculator blockCalculator)
         {
             _blockCalculator = blockCalculator ?? throw new System.ArgumentNullException(nameof(blockCalculator));
+            // Warning: JumpSimulator might be null here if this constructor is used.
+            // Consider ensuring JumpSimulator is always provided or handle null case.
+            _jumpSimulator = null; // Explicitly null if not provided
         }
         /// <summary>
         /// Resolves the release of a shot. Sets the ball in flight with calculated inaccuracy and spin.
         /// </summary>
         public ActionResult ResolveShotAttempt(SimPlayer shooter, MatchState state, HandballManager.Simulation.AI.Evaluation.IGameStateEvaluator evaluator)
         {
+            // --- Penalty Shot Resolution --- 
+            if (state.CurrentPhase == GamePhase.HomePenalty || state.CurrentPhase == GamePhase.AwayPenalty)
+            {
+                return ResolvePenaltyShot(shooter, state);
+            }
+
+            // --- Normal Shot Resolution (Existing Logic) --- 
             // Conditional jump logic
-            if (shooter?.BaseData != null && state != null && JumpDecisionUtils.ShouldJumpForShot(shooter, state, evaluator))
+            if (shooter?.BaseData != null && state != null && _jumpSimulator != null && JumpDecisionUtils.ShouldJumpForShot(shooter, state, evaluator))
             {
                 // Calculate vertical velocity based on Jumping attribute
                 float jumpingValue = Mathf.Clamp(shooter.BaseData.Jumping, 0f, 100f);
@@ -79,23 +90,41 @@ namespace HandballManager.Simulation.Events.Calculators
             // Positioning : améliore l'angle de tir (réduit la déviation)
             float positioningMod = Mathf.Lerp(1.0f, 0.95f, shooter.BaseData.Positioning / 100f);
 
-            float maxAngleDeviation = ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * (1.0f - accuracyFactor);
-            maxAngleDeviation *= (1.0f + pressureEffectiveness * ActionResolverConstants.SHOT_PRESSURE_INACCURACY_MOD * strengthEffect);
-            maxAngleDeviation *= agilityEffect * positioningMod; // Ajout effet agilité et placement
-            // Concentration: add random noise, reduced by high concentration (tuned scaling)
-            float concentrationNoise = UnityEngine.Random.Range(0f, 2f) * (1.0f - (shooter.BaseData.Concentration / 100f));
-            maxAngleDeviation += concentrationNoise;
-            // Decision Making: if very low, add slight penalty
-            if (shooter.BaseData.DecisionMaking < 40)
-                maxAngleDeviation *= 1.05f;
-            maxAngleDeviation = Mathf.Clamp(maxAngleDeviation, 0f, ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * ActionResolverConstants.SHOT_MAX_DEVIATION_CLAMP_FACTOR);
+            float baseAcc = ActionResolverConstants.SHOT_ACCURACY_BASE;
+            float shotSkill = (shooter.BaseData.ShootingAccuracy + shooter.BaseData.Technique) / 2f;
+            float attrScore = Sigmoid((shotSkill - 50f) / 20f);
+            float distVal = Vector3.Distance(ActionCalculatorUtils.GetPosition3D(shooter), new Vector3(targetGoalCenter2D.x, 1.2f, targetGoalCenter2D.y));
+            float distFactor = Mathf.Exp(-distVal / ActionResolverConstants.PITCH_LENGTH);
+            float defenderPressure = ActionCalculatorUtils.CalculatePressureOnPlayer(shooter, state);
+            float pressFactor = 1f - Mathf.Clamp01(defenderPressure / ActionResolverConstants.MAX_PRESSURE_DIST);
+            float fatigueFactor = (float)System.Math.Tanh(shooter.Stamina / 100f);
+            float noiseSigma = 0.02f;
+            float noise = (float)(state.RandomGenerator.NextDouble() * noiseSigma - noiseSigma / 2f);
+            float accuracyChance = baseAcc * attrScore * distFactor * pressFactor * fatigueFactor + noise;
 
-            float horizontalAngleOffset = (float)state.RandomGenerator.NextDouble() * 2 * maxAngleDeviation - maxAngleDeviation;
+            // --- Fatigue Penalty (Stamina) ---
+            float stamina = shooter.Stamina;
+            float fatigueThreshold = 0.5f; // Penalty starts below 50% stamina
+            float maxFatigueAccuracyPenalty = 0.4f; // Max 40% increase in angle deviation
+            float maxFatigueSpeedPenalty = 0.2f; // Max 20% reduction in speed
+            float fatiguePenaltyFactor = 0f;
+            if (stamina < fatigueThreshold)
+            {
+                // Non-linear scaling: penalty increases quadratically as stamina drops below threshold
+                fatiguePenaltyFactor = Mathf.Pow((fatigueThreshold - stamina) / fatigueThreshold, 2.0f);
+            }
+
+            // Apply fatigue penalty to accuracy (increase deviation)
+            float fatigueAccuracyPenalty = fatiguePenaltyFactor * maxFatigueAccuracyPenalty;
+            float maxAngleDeviation = ActionResolverConstants.SHOT_MAX_ANGLE_OFFSET_DEGREES * (1f - Mathf.Clamp01(accuracyChance)) * (1f + fatigueAccuracyPenalty);
+            float horizontalAngleOffset = (float)state.RandomGenerator.NextDouble() * 2f * maxAngleDeviation - maxAngleDeviation;
 
             Vector3 shooterPos3D = ActionCalculatorUtils.GetPosition3D(shooter); // Utilise la position 3D réelle
             Vector3 targetGoalCenter3D = new Vector3(targetGoalCenter2D.x, 1.2f, targetGoalCenter2D.y);
 
-            float speed = ActionResolverConstants.SHOT_BASE_SPEED * Mathf.Lerp(0.8f, 1.2f, shooter.BaseData.ShootingPower / 100f) * staminaEffect;
+            // Apply fatigue penalty to speed (decrease speed)
+            float fatigueSpeedPenalty = fatiguePenaltyFactor * maxFatigueSpeedPenalty;
+            float speed = ActionResolverConstants.SHOT_BASE_SPEED * Mathf.Lerp(0.8f, 1.2f, shooter.BaseData.ShootingPower / 100f) * staminaEffect * (1f - fatigueSpeedPenalty);
             Vector3 idealDirection3D = (targetGoalCenter3D - shooterPos3D).normalized;
             // --- Fin intégration attributs physiques/mentaux ---
 
@@ -124,6 +153,13 @@ namespace HandballManager.Simulation.Events.Calculators
             Vector3 spinAxis = CalculateShotSpinAxis(shooter, horizontalAxis, actualDirection3D, state);
             float spinMagnitude = CalculateShotSpinMagnitude(shooter, state);
             Vector3 angularVelocity = spinAxis * spinMagnitude;
+
+            state.Ball.SetLastShooter(shooter); // Record who took the shot
+            state.Ball.ResetPassContext(); // Clear any previous pass info
+
+            // Update shooter state: no longer has the ball
+            shooter.HasBall = false; 
+            state.Ball.SetHolder(null); // Ball is now in flight, not held
 
             state.Ball.ReleaseAsShot(shooter, actualDirection3D * speed, angularVelocity);
 
@@ -180,10 +216,137 @@ namespace HandballManager.Simulation.Events.Calculators
                     Reason = reason
                 };
             }
-            // --- End Block Logic ---
-
-            return new ActionResult { Outcome = ActionResultOutcome.Success, PrimaryPlayer = shooter, Reason = "Shot Taken" };
+            // Delegate GK save resolution to SaveResolver
+            return SaveResolver.ResolveSaveAttempt(shooter, actualDirection3D, speed, shooter.BaseData.Height, state);
         }
+
+        // --- New Method for Penalty Resolution ---
+        private ActionResult ResolvePenaltyShot(SimPlayer shooter, MatchState state)
+        {
+            if (shooter == null || state == null || shooter.BaseData == null)
+            {
+                return new ActionResult { Outcome = ActionResultOutcome.Failure, PrimaryPlayer = shooter, Reason = "Invalid input for penalty resolution." };
+            }
+
+            SimPlayer goalkeeper = state.GetGoalkeeper(1 - shooter.TeamSimId);
+            if (goalkeeper == null || goalkeeper.BaseData == null)
+            {
+                // No GK? Automatic goal (shouldn't happen in penalty phase setup)
+                Debug.LogWarning("[Penalty] Goalkeeper not found during penalty resolution.");
+                // TODO: Decide how to handle ball state for automatic goal
+                // For now, return a success placeholder
+                return new ActionResult { Outcome = ActionResultOutcome.Goal, PrimaryPlayer = shooter, Reason = "Penalty Goal (No Goalkeeper)" };
+            }
+
+            // 1. Get Shooter's Aim and GK's Dive Target (from their PlannedAction data)
+            //    We assume PlayerAIController set these correctly.
+            Vector2 shotTarget2D = shooter.TargetPosition; // The point on the goal line the shooter aimed at.
+            Vector2 diveTarget2D = goalkeeper.TargetPosition; // The point on the goal line the GK committed to.
+
+            // 2. Define Goal Zones (Simplified: Left, Center, Right)
+            float goalCenterY = ActionResolverConstants.PITCH_CENTER_Y;
+            float zoneWidth = ActionResolverConstants.GOAL_WIDTH / 3f;
+            float leftZoneBoundary = goalCenterY - zoneWidth / 2f;
+            float rightZoneBoundary = goalCenterY + zoneWidth / 2f;
+
+            GoalZone shotZone = GetGoalZone(shotTarget2D.y, leftZoneBoundary, rightZoneBoundary);
+            GoalZone diveZone = GetGoalZone(diveTarget2D.y, leftZoneBoundary, rightZoneBoundary);
+
+            // 3. Calculate Base Save Probability (GK Dive vs Shot Placement)
+            float baseSaveProbability = 0.1f; // Base chance even if GK guesses wrong
+            if (shotZone == diveZone)
+            {
+                baseSaveProbability = 0.75f; // High chance if GK dives correctly
+            }
+            else if ((shotZone == GoalZone.Left && diveZone == GoalZone.Center) ||
+                     (shotZone == GoalZone.Right && diveZone == GoalZone.Center) ||
+                     (shotZone == GoalZone.Center && diveZone != GoalZone.Center))
+            {
+                baseSaveProbability = 0.35f; // Medium chance if GK dives center or shooter aims center
+            }
+
+            // 4. Factor in Player Attributes
+            // Shooter Attributes (Accuracy, Composure influence *chance to hit target zone accurately*)
+            float shooterAccuracyFactor = Mathf.Clamp01(shooter.BaseData.ShootingAccuracy / 100f);
+            float shooterComposureFactor = Mathf.Clamp01(shooter.BaseData.Composure / 100f);
+            // Combine them (e.g., weighted average or multiplicative)
+            float shooterPerformance = Mathf.Lerp(0.5f, 1.0f, (shooterAccuracyFactor + shooterComposureFactor) / 2f);
+
+            // GK Attributes (PenaltySaving, Reflexes influence *save chance within the chosen dive zone*)
+            float gkSavingFactor = Mathf.Clamp01(goalkeeper.BaseData.PenaltySaving / 100f);
+            float gkReflexFactor = Mathf.Clamp01(goalkeeper.BaseData.Reflexes / 100f);
+            // Combine them
+            float gkPerformance = Mathf.Lerp(0.5f, 1.0f, (gkSavingFactor + gkReflexFactor) / 2f);
+
+            // Adjust save probability based on attributes
+            // If GK guessed right, GK performance increases save chance significantly
+            // If GK guessed wrong, GK performance has less impact
+            // Shooter performance slightly reduces save chance (better shot is harder to save)
+            float finalSaveProbability = baseSaveProbability;
+            if (shotZone == diveZone)
+            {
+                 finalSaveProbability = Mathf.Lerp(finalSaveProbability, 1.0f, gkPerformance * 0.5f); // Stronger GK influence
+                 finalSaveProbability *= (1.0f - shooterPerformance * 0.2f); // Shooter reduces chance slightly
+            }
+            else
+            {
+                 finalSaveProbability = Mathf.Lerp(0f, finalSaveProbability, gkPerformance * 0.3f); // Weaker GK influence
+                 finalSaveProbability *= (1.0f - shooterPerformance * 0.1f);
+            }
+
+             finalSaveProbability = Mathf.Clamp01(finalSaveProbability);
+
+            // 5. Determine Outcome
+            bool saved = state.RandomGenerator.NextDouble() < finalSaveProbability;
+
+            // TODO: Add logic for hitting post/missing wide based on accuracy?
+            // For now, simplify: if not saved, it's a goal.
+
+            if (saved)
+            {
+                Debug.Log($"[Penalty Result] SAVE! Shooter: {shooter.GetPlayerId()}, GK: {goalkeeper.GetPlayerId()}, ShotZone: {shotZone}, DiveZone: {diveZone}, Prob: {finalSaveProbability:P2}");
+                // TODO: Set ball state correctly for a save (e.g., GK possession or rebound)
+                shooter.HasBall = false; // Shooter no longer has the ball
+                state.Ball.SetPossession(goalkeeper); // Give possession to goalkeeper
+                state.Ball.Velocity = Vector3.zero;
+                state.Ball.Position = goalkeeper.Position + Vector2.right * (goalkeeper.TeamSimId == 0 ? -0.5f : 0.5f); // Place near GK
+                return new ActionResult
+                {
+                    Outcome = ActionResultOutcome.Saved,
+                    PrimaryPlayer = shooter,
+                    SecondaryPlayer = goalkeeper,
+                    PossessionPlayer = goalkeeper,
+                    Reason = "Penalty saved by goalkeeper."
+                };
+            }
+            else
+            {
+                Debug.Log($"[Penalty Result] GOAL! Shooter: {shooter.GetPlayerId()}, GK: {goalkeeper.GetPlayerId()}, ShotZone: {shotZone}, DiveZone: {diveZone}, Prob: {finalSaveProbability:P2}");
+                // TODO: Set ball state for a goal
+                shooter.HasBall = false; // Shooter no longer has the ball
+                state.Ball.SetPossession(null); // No possession after goal
+                // ActionResolver/EventHandler usually handles goal event triggering phase change
+                return new ActionResult
+                {
+                    Outcome = ActionResultOutcome.Goal,
+                    PrimaryPlayer = shooter,
+                    SecondaryPlayer = goalkeeper,
+                    Reason = "Penalty scored."
+                };
+            }
+        }
+
+        private enum GoalZone { Left, Center, Right }
+
+        private GoalZone GetGoalZone(float yPos, float leftBoundary, float rightBoundary)
+        {
+            if (yPos < leftBoundary) return GoalZone.Left;
+            if (yPos > rightBoundary) return GoalZone.Right;
+            return GoalZone.Center;
+        }
+
+        // --- End of Penalty Resolution Method ---
+
 
         private const float DOMINANT_HAND_PROBABILITY = 0.7f;
         private const float MIN_SPIN_VARIANCE = 0.8f;

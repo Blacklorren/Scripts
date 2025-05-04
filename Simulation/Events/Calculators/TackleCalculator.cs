@@ -49,13 +49,14 @@ namespace HandballManager.Simulation.Events.Calculators
              // Reset actions for both players *after* calculations
               tackler.CurrentAction = PlayerAction.Idle;
               tackler.ActionTimer = 0f;
-              if (target.CurrentAction != PlayerAction.Suspended) {
+              if (!target.IsSuspended()) {
                    target.CurrentAction = PlayerAction.Idle;
                    target.ActionTimer = 0f;
               }
 
              if (roll < successChance) {
                  // SUCCESS
+                 // Access HasBall directly from SimPlayer
                  bool targetHadBall = target.HasBall; // Must check BEFORE MakeLoose
                  if (targetHadBall) {
                      state.Ball.MakeLoose(
@@ -144,6 +145,18 @@ namespace HandballManager.Simulation.Events.Calculators
             successChance *= staminaMod * workRateMod * determinationMod * positioningMod * resilienceMod;
             foulChance *= decisionMod * (2f - positioningMod); // positioningMod < 1 donc réduit la faute
 
+            // --- Fatigue Penalty (Stamina) ---
+            float stamina = tackler.Stamina;
+            float fatigueThreshold = 0.5f; // Penalty starts below 50% stamina
+            float maxFatiguePenalty = 0.25f; // Max 25% reduction in success chance due to fatigue
+            float fatiguePenaltyFactor = 1.0f; // Default: no penalty
+            if (stamina < fatigueThreshold)
+            {
+                // Non-linear scaling: penalty increases quadratically as stamina drops below threshold
+                fatiguePenaltyFactor = 1.0f - (Mathf.Pow((fatigueThreshold - stamina) / fatigueThreshold, 2.0f) * maxFatiguePenalty);
+            }
+            successChance *= fatiguePenaltyFactor;
+
             // --- Mental Attribute Integration ---
             // Composure: add bonus to success (up to 2%)
             successChance *= 1.0f + (tackler.BaseData.Composure / 350f);
@@ -165,6 +178,13 @@ namespace HandballManager.Simulation.Events.Calculators
                 foulChance *= Mathf.Lerp(1.0f, ActionResolverConstants.TACKLE_HIGH_SPEED_FOUL_MOD, Mathf.Clamp01((closingSpeed - highSpeedThreshold) / (ActionResolverConstants.MAX_PLAYER_SPEED * (1.0f - ActionResolverConstants.TACKLE_HIGH_SPEED_THRESHOLD_FACTOR))));
             }
             if (ActionCalculatorUtils.IsClearScoringChance(target, state)) foulChance *= ActionResolverConstants.TACKLE_CLEAR_CHANCE_FOUL_MOD; // Use Util
+
+            // Speed effect on success: faster approach = slightly higher success chance
+            float speedSuccessMod = Mathf.Lerp(0.8f, 1.2f, Mathf.Clamp01(closingSpeed / ActionResolverConstants.MAX_PLAYER_SPEED));
+            successChance *= speedSuccessMod;
+            // Angle effect: frontal tackles benefit, penalize from behind
+            bool fromBehind = ActionCalculatorUtils.IsTackleFromBehind(tackler, target);
+            successChance *= fromBehind ? 0.8f : 1.05f;
 
             successChance = Mathf.Clamp01(successChance);
             foulChance = Mathf.Clamp01(foulChance);

@@ -2,6 +2,7 @@ using HandballManager.Core;
 using HandballManager.Simulation.Engines;
 using UnityEngine;
 using HandballManager.Simulation.AI.Evaluation; // Ajout pour accès aux évaluateurs
+using System.Collections.Generic;
 using HandballManager.Gameplay; // Pour PlayerPosition, Tactic, etc.
 using HandballManager.Simulation.Utils;
 
@@ -10,7 +11,7 @@ namespace HandballManager.Simulation.AI.Decision
     /// <summary>
     /// Default implementation of the offensive decision maker interface.
     /// </summary>
-    public class DefaultOffensiveDecisionMaker : IOffensiveDecisionMaker
+    public class DefaultOffensiveDecisionMaker : IOffensiveDecisionMaker, IShootingDecisionMaker, IPassingDecisionMaker, IDribblingDecisionMaker
     {
         // Ajout : Evaluateurs contextuels (injection possible ou fallback statique)
         private readonly ITacticalEvaluator _tacticalEvaluator;
@@ -53,13 +54,13 @@ namespace HandballManager.Simulation.AI.Decision
 
             foreach (var mate in teammates)
             {
-                if (mate == null || mate == player || !mate.IsOnCourt || mate.CurrentAction == PlayerAction.Suspended) continue;
+                if (mate == null || mate == player || !mate.IsOnCourt || mate.IsSuspended()) continue;
                 float score = -Vector2.Distance(mate.Position, GetOpponentGoalPosition(player.TeamSimId));
                 score += 0.02f * teamwork;
                 if ((mate.Velocity.sqrMagnitude > 1.0f)) score += 0.01f * anticipation;
                 foreach (var opp in opponents)
                 {
-                    if (opp == null || !opp.IsOnCourt || opp.CurrentAction == PlayerAction.Suspended) continue;
+                    if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
                     if (Vector2.Distance(mate.Position, opp.Position) < 2.0f) score -= 5.0f;
                 }
                 // Handball-specific role-based logic
@@ -161,7 +162,7 @@ namespace HandballManager.Simulation.AI.Decision
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
             bool inGoalArea = pitchGeometry.IsInGoalArea(new Vector3(player.Position.x, SimConstants.BALL_RADIUS, player.Position.y), player.TeamSimId == 0);
-            bool isOnGround = player.CurrentAction != PlayerAction.Jumping;
+            bool isOnGround = player.CurrentAction != PlayerAction.JumpingForShot;
             bool allowShot = true;
             if (inGoalArea && isOnGround)
             {
@@ -187,7 +188,7 @@ namespace HandballManager.Simulation.AI.Decision
             int defendersNearby = 0;
             foreach (var opp in opponents)
             {
-                if (opp == null || !opp.IsOnCourt || opp.CurrentAction == PlayerAction.Suspended) continue;
+                if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
                 if (Vector2.Distance(player.Position, opp.Position) < 2.5f) defendersNearby++;
             }
 
@@ -196,7 +197,7 @@ namespace HandballManager.Simulation.AI.Decision
             bool isPivot = role == PlayerPosition.Pivot;
             bool hasStrongShot = shootingPower > 85 && technique > 75;
             bool isLongRange = distToGoal >= 9.0f && distToGoal <= 12.0f;
-            bool isJumping = player.CurrentAction == PlayerAction.Jumping;
+            bool isJumping = player.CurrentAction == PlayerAction.JumpingForShot;
             float shotConfidenceMod = Mathf.Lerp(0.8f, 1.2f, (composure + bravery + aggression + decisionMaking + determination + shootingPower + finishing) / 700f);
 
             // Handball-specific role-based logic
@@ -244,7 +245,7 @@ namespace HandballManager.Simulation.AI.Decision
                     // Discourage shooting otherwise
                     float confidence = 0.3f * shotConfidenceMod * combinedRisk;
                     // Encourage setting screens or finding space
-                    if (EvaluateScreenOpportunity(context).IsSuccessful)
+                    if (EvaluateScreenOpportunity(context)?.ShouldSetScreen == true)
                         confidence += 0.1f;
                     return new DecisionResult { IsSuccessful = false, Confidence = confidence };
                 }
@@ -275,8 +276,8 @@ namespace HandballManager.Simulation.AI.Decision
                 return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
 
             Vector2 dribbleTarget = GetOpponentGoalPosition(player.TeamSimId);
-            bool isJumpPlanned = player.PlannedAction == PlayerAction.Jumping || player.PlannedAction == PlayerAction.PreparingShot;
-            bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea);
+            bool isJumpPlanned = player.PlannedAction == PlayerAction.JumpingForShot || player.PlannedAction == PlayerAction.PreparingShot;
+            bool willBeInAir = isJumpPlanned || (player.CurrentAction == PlayerAction.JumpingForShot && player.JumpOriginatedOutsideGoalArea);
             bool isInGoalArea = pitchGeometry.IsInGoalArea(dribbleTarget, player.TeamSimId == 0);
             if (!willBeInAir && isInGoalArea)
             {
@@ -290,7 +291,7 @@ namespace HandballManager.Simulation.AI.Decision
             int nearbyOpponents = 0;
             foreach (var opp in opponents)
             {
-                if (opp == null || !opp.IsOnCourt || opp.CurrentAction == PlayerAction.Suspended) continue;
+                if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
                 if ((player.Position - opp.Position).sqrMagnitude < 9.0f) nearbyOpponents++;
             }
             PlayerPosition role = player.AssignedTacticalRole;
@@ -354,7 +355,7 @@ namespace HandballManager.Simulation.AI.Decision
                     return new DecisionResult { IsSuccessful = true, Confidence = 0.4f * dribbleConfidenceMod * combinedRisk, Data = dribbleTarget };
                 }
                 // Prefer to set screens or reposition
-                if (EvaluateScreenOpportunity(context).IsSuccessful)
+                if (EvaluateScreenOpportunity(context)?.ShouldSetScreen == true)
                 {
                     return new DecisionResult { IsSuccessful = false, Confidence = 0.25f * dribbleConfidenceMod * combinedRisk };
                 }
@@ -384,7 +385,114 @@ namespace HandballManager.Simulation.AI.Decision
                     return MakeShootDecision(context);
                 }
 
-            
+        /// <summary>
+        /// Calculates a score representing how desirable taking a shot is in the current situation.
+        /// </summary>
+        /// <param name="shooter">The player considering the shot.</param>
+        /// <param name="state">The current match state.</param>
+        /// <param name="tactic">The team's current tactic.</param>
+        /// <returns>A score between 0 and 1 (higher is more desirable).</returns>
+        public float EvaluateShootScore(SimPlayer shooter, MatchState state, Tactic tactic)
+        {
+            // Defensive: return 0 if any input is null
+            if (shooter == null || state == null || tactic == null)
+                return 0f;
+
+            // Reuse logic from MakeShootDecision, but only compute the confidence value
+            var opponents = state.GetOpposingTeamOnCourt(shooter.TeamSimId);
+            var pitchGeometry = new HandballManager.Simulation.Utils.PitchGeometryProvider();
+            Vector2 goalPos = GetOpponentGoalPosition(shooter.TeamSimId);
+            float distToGoal = Vector2.Distance(shooter.Position, goalPos);
+
+            if (!shooter.HasBall)
+                return 0f;
+
+            bool inGoalArea = pitchGeometry.IsInGoalArea(new Vector3(shooter.Position.x, SimConstants.BALL_RADIUS, shooter.Position.y), shooter.TeamSimId == 0);
+            bool isOnGround = shooter.CurrentAction != PlayerAction.JumpingForShot;
+            bool allowShot = true;
+            if (inGoalArea && isOnGround)
+            {
+                allowShot = false;
+                // If you want to allow rare 6m zone errors, you could call ShouldMake6mZoneError here if accessible
+            }
+
+            PlayerPosition role = shooter.AssignedTacticalRole;
+            float composure = shooter.BaseData?.Composure ?? 50f;
+            float bravery = shooter.BaseData?.Bravery ?? 50f;
+            float aggression = shooter.BaseData?.Aggression ?? 50f;
+            float decisionMaking = shooter.BaseData?.DecisionMaking ?? 50f;
+            float determination = shooter.BaseData?.Determination ?? 50f;
+            float shootingPower = shooter.BaseData?.ShootingPower ?? 50f;
+            float technique = shooter.BaseData?.Technique ?? 50f;
+            float finishing = shooter.BaseData?.ShootingAccuracy ?? 50f;
+            float tacticalRisk = _tacticalEvaluator?.GetRiskModifier(tactic) ?? 1f;
+            float personalityShoot = _personalityEvaluator?.GetShootingTendencyModifier(shooter.BaseData) ?? 1f;
+            float gameStateRisk = _gameStateEvaluator?.GetAttackRiskModifier(state, shooter.TeamSimId) ?? 1f;
+            float combinedRisk = tacticalRisk * personalityShoot * gameStateRisk;
+
+            int defendersNearby = 0;
+            foreach (var opp in opponents)
+            {
+                if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
+                if (Vector2.Distance(shooter.Position, opp.Position) < 2.5f) defendersNearby++;
+            }
+
+            bool isBackcourt = PlayerPositionHelper.IsBack(role);
+            bool isWing = PlayerPositionHelper.IsWing(role);
+            bool isPivot = role == PlayerPosition.Pivot;
+            bool hasStrongShot = shootingPower > 85 && technique > 75;
+            bool isLongRange = distToGoal >= 9.0f && distToGoal <= 12.0f;
+            bool isJumping = shooter.CurrentAction == PlayerAction.JumpingForShot;
+            float shotConfidenceMod = Mathf.Lerp(0.8f, 1.2f, (composure + bravery + aggression + decisionMaking + determination + shootingPower + finishing) / 700f);
+
+            float confidence = 0f;
+            if (isWing && allowShot)
+            {
+                float jumping = shooter.BaseData?.Jumping ?? 50f;
+                bool wideAngle = pitchGeometry.IsWideWingAngleNearGoal(shooter.Position, shooter.TeamSimId, jumping);
+                float baseConf = 0.55f;
+                if (wideAngle && distToGoal < 7.5f)
+                {
+                    baseConf = 0.85f;
+                }
+                else if (!wideAngle)
+                {
+                    baseConf = 0.4f;
+                }
+                float angleBonus = (Mathf.Abs(shooter.Position.x - goalPos.x) > 10f) ? 0.1f : 0f;
+                confidence = (baseConf + angleBonus - 0.12f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                return Mathf.Clamp01(confidence);
+            }
+            if (isBackcourt && allowShot)
+            {
+                if (distToGoal > 7.0f && defendersNearby <= 2)
+                {
+                    float rangeBonus = (distToGoal > 9.0f && hasStrongShot) ? 0.1f : 0.0f;
+                    float baseConf = (role == PlayerPosition.CentreBack) ? 0.75f : 0.7f;
+                    confidence = (baseConf + rangeBonus - 0.1f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                    return Mathf.Clamp01(confidence);
+                }
+            }
+            if (isPivot && allowShot)
+            {
+                bool near6m = distToGoal < 7.0f && pitchGeometry.IsNearSixMeterLine(shooter.Position, shooter.TeamSimId);
+                bool justReceived = shooter.ReceivedPassRecently;
+                if (near6m && justReceived)
+                {
+                    confidence = (0.88f - 0.13f * defendersNearby) * shotConfidenceMod * combinedRisk;
+                    return Mathf.Clamp01(confidence);
+                }
+                else
+                {
+                    confidence = 0.4f * shotConfidenceMod * combinedRisk;
+                    return Mathf.Clamp01(confidence);
+                }
+            }
+            // Default: discourage shooting
+            confidence = 0.2f * shotConfidenceMod * combinedRisk;
+            return Mathf.Clamp01(confidence);
+        }
+
         // Returns true if the player should make a 6m zone error (shot on ground in zone), based on attributes
         private bool ShouldMake6mZoneError(SimPlayer player, MatchState state)
         {
@@ -407,75 +515,71 @@ namespace HandballManager.Simulation.AI.Decision
             return teamSimId == 0 ? new Vector2(20f, fieldLength) : new Vector2(20f, 0f);
         }
 
-        /// <summary>
-        /// Evaluates if the player should set a screen for a teammate.
-        /// </summary>
-        public DecisionResult EvaluateScreenOpportunity(PlayerAIContext context)
-        {
-            // Refined logic: Pivot should set screens for backcourt players; others rarely set screens
-            if (context == null || context.Player == null || context.MatchState == null)
-                return new DecisionResult { IsSuccessful = false, Confidence = 0.0f };
-            var player = context.Player;
-            var state = context.MatchState;
-            var teammates = state.GetTeamOnCourt(player.TeamSimId);
-            var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
-            bool isPivot = player.AssignedTacticalRole == PlayerPosition.Pivot;
-            var tacticPositioner = context.TacticPositioner as Positioning.TacticPositioner;
+            /// <summary>
+    /// Evaluates if the player should set a screen for a teammate. Matches IOffensiveDecisionMaker interface.
+    /// </summary>
+    public ScreenDecisionData? EvaluateScreenOpportunity(PlayerAIContext context) // Changed return type
+    {
+        // Refined logic: Pivot should set screens for backcourt players; others rarely set screens
+        if (context == null || context.Player == null || context.MatchState == null)
+            return null; // Return null if context is invalid (Changed from DecisionResult)
 
-            if (isPivot && tacticPositioner != null)
+        var player = context.Player;
+        var state = context.MatchState;
+        var teammates = state.GetTeamOnCourt(player.TeamSimId);
+        var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
+        bool isPivot = player.AssignedTacticalRole == PlayerPosition.Pivot;
+        // Ensure TacticPositioner is correctly obtained from context or dependency injection
+        var tacticPositioner = context.TacticPositioner;
+
+        if (isPivot && tacticPositioner != null)
+        {
+            // Pivot: prioritize setting screens for backcourt teammates
+            foreach (var mate in teammates)
             {
-                // Pivot: prioritize setting screens for backcourt teammates
-                foreach (var mate in teammates)
-                {
-                    if (mate == null || mate == player || !mate.IsOnCourt || mate.CurrentAction == PlayerAction.Suspended) continue;
-                    // Only consider backcourt teammates
-                    // Only consider backcourt teammates
-                    if (mate.AssignedTacticalRole != PlayerPosition.LeftBack && mate.AssignedTacticalRole != PlayerPosition.CentreBack && mate.AssignedTacticalRole != PlayerPosition.RightBack)
+                if (mate == null || mate == player || !mate.IsOnCourt || mate.IsSuspended()) continue;
+                // Only consider backcourt teammates
+                if (mate.AssignedTacticalRole != PlayerPosition.LeftBack && mate.AssignedTacticalRole != PlayerPosition.CentreBack && mate.AssignedTacticalRole != PlayerPosition.RightBack)
                     continue;
-                    float distToMate = Vector2.Distance(player.Position, mate.Position);
-                    if (distToMate < 2.5f) // Close enough to set a screen
+
+                float distToMate = Vector2.Distance(player.Position, mate.Position);
+                if (distToMate < 2.5f) // Close enough to set a screen
+                {
+                    // Is mate near the 9m line and has a close defender?
+                    // Adjust Y-check based on actual pitch coordinates if needed
+                    if (mate.Position.y > 7.0f && mate.Position.y < 10.0f) // Approximate 9m line
                     {
-                        // Is mate near the 9m line and has a close defender?
-                        if (mate.Position.y > 7.0f && mate.Position.y < 10.0f) // Approximate 9m line
+                        foreach (var opp in opponents)
                         {
-                            foreach (var opp in opponents)
+                            if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
+                            float distToOpp = Vector2.Distance(mate.Position, opp.Position);
+                            if (distToOpp < 1.5f)
                             {
-                                if (opp == null || !opp.IsOnCourt || opp.CurrentAction == PlayerAction.Suspended) continue;
-                                float distToOpp = Vector2.Distance(mate.Position, opp.Position);
-                                if (distToOpp < 1.5f)
+                                // Use helpers to determine screen spot and effectiveness
+                                Vector2 screenSpot = tacticPositioner.GetScreenSpotForScreener(player, mate, opp);
+                                float angle = tacticPositioner.GetScreenAngleBetweenDefenderAndTarget(opp, player, mate);
+
+                                // Package info for downstream use
+                                var screenData = new ScreenDecisionData
                                 {
-                                    // Use helpers to determine screen spot and effectiveness
-                                    Vector2 screenSpot = tacticPositioner.GetScreenSpotForScreener(player, mate, opp);
-                                    float angle = tacticPositioner.GetScreenAngleBetweenDefenderAndTarget(opp, player, mate);
-                                    // Package info for downstream use
-                                    var screenData = new ScreenDecisionData
-                                    {
-                                        Screener = player,
-                                        User = mate,
-                                        Defender = opp,
-                                        ScreenSpot = screenSpot,
-                                        EffectivenessAngle = angle
-                                    };
-                                    float confidence = 0.6f + Mathf.Clamp01(angle / 90f) * 0.2f; // More open angle = higher confidence
-                                    return new DecisionResult { IsSuccessful = true, Confidence = confidence, Data = screenData };
-                                }
+                                    Screener = player,
+                                    User = mate,
+                                    Defender = opp,
+                                    ScreenSpot = screenSpot,
+                                    EffectivenessAngle = angle,
+                                    ShouldSetScreen = true // Explicitly set flag
+                                };
+                                // Return the data struct directly (Changed from DecisionResult)
+                                return screenData;
                             }
                         }
                     }
                 }
             }
-            return new DecisionResult { IsSuccessful = false, Confidence = 0.2f };
         }
-
-        // Helper struct for screen data
-        public struct ScreenDecisionData
-        {
-            public SimPlayer Screener;
-            public SimPlayer User;
-            public SimPlayer Defender;
-            public Vector2 ScreenSpot;
-            public float EffectivenessAngle;
-        }
+        // Return null if no suitable screen opportunity found (Changed from DecisionResult)
+        return null;
+    }
 
         /// <summary>
         /// Determines if a player should use a screen set by a teammate.
@@ -499,7 +603,7 @@ namespace HandballManager.Simulation.AI.Decision
                 // Backcourt players: use pivot's screens
                 foreach (var mate in teammates)
                 {
-                    if (mate == null || mate == player || !mate.IsOnCourt || mate.CurrentAction == PlayerAction.Suspended) continue;
+                    if (mate == null || mate == player || !mate.IsOnCourt || mate.IsSuspended()) continue;
                     if (mate.AssignedTacticalRole == PlayerPosition.Pivot && mate.CurrentAction == PlayerAction.SettingScreen)
                     {
                         float distToMate = Vector2.Distance(player.Position, mate.Position);
@@ -525,7 +629,7 @@ namespace HandballManager.Simulation.AI.Decision
                 // Pivot: can use a screen from a backcourt player (rare)
                 foreach (var mate in teammates)
                 {
-                    if (mate == null || mate == player || !mate.IsOnCourt || mate.CurrentAction == PlayerAction.Suspended) continue;
+                    if (mate == null || mate == player || !mate.IsOnCourt || mate.IsSuspended()) continue;
                     if ((mate.AssignedTacticalRole == PlayerPosition.LeftBack || mate.AssignedTacticalRole == PlayerPosition.CentreBack || mate.AssignedTacticalRole == PlayerPosition.RightBack)
                         && mate.CurrentAction == PlayerAction.SettingScreen)
                     {
@@ -557,6 +661,168 @@ namespace HandballManager.Simulation.AI.Decision
             public Vector2 UseSpot;
             public float EffectivenessAngle;
         }
+
+        #region IShootingDecisionMaker Explicit Implementation
+        // Existing explicit implementation for EvaluateShootScore
+        float IShootingDecisionMaker.EvaluateShootScore(SimPlayer shooter, MatchState state, Tactic tactic)
+        {
+            return EvaluateShootScore(shooter, state, tactic);
+        }
+
+        // Explicit implementation for DecideAction
+        float IShootingDecisionMaker.DecideAction(SimPlayer shooter, MatchState state)
+        {
+            // Determine the correct tactic based on the shooter's team
+            // Assuming MatchState provides access to team tactics. Adjust if necessary.
+            Tactic currentTactic = (shooter.TeamId == 0) ? state.HomeTactic : state.AwayTactic;
+
+            if (currentTactic == null)
+            {
+                // Handle cases where the tactic might not be set yet or is invalid
+                Debug.LogWarning($"[{nameof(DefaultOffensiveDecisionMaker)}] Tactic not found for team {shooter.TeamId} in DecideAction. Returning default score 0.");
+                return 0f; // Default score if tactic is missing
+            }
+
+            // Reuse the existing EvaluateShootScore logic
+            return EvaluateShootScore(shooter, state, currentTactic);
+        }
+        #endregion
+
+        #region IPassingDecisionMaker Explicit Implementation
         
+        List<PassOption> IPassingDecisionMaker.EvaluatePassOptions(SimPlayer passer, MatchState state, Tactic tactic, bool safeOnly)
+        {
+            return EvaluatePassOptionsImpl(passer, state, tactic, safeOnly);
+        }
+        private List<PassOption> EvaluatePassOptionsImpl(SimPlayer passer, MatchState state, Tactic tactic, bool safeOnly)
+        {
+            var passOptions = new List<PassOption>();
+            if (passer == null || state == null || tactic == null) return passOptions;
+            var teammates = state.GetTeamOnCourt(passer.TeamSimId);
+            var opponents = state.GetOpposingTeamOnCourt(passer.TeamSimId);
+            var pitchGeometry = new HandballManager.Simulation.Utils.PitchGeometryProvider();
+            float teamwork = passer.BaseData?.Teamwork ?? 50f;
+            float anticipation = passer.BaseData?.Anticipation ?? 50f;
+            float passing = passer.BaseData?.Passing ?? 50f;
+            float composure = passer.BaseData?.Composure ?? 50f;
+            float creativity = passer.BaseData?.Creativity ?? 50f;
+            PlayerPosition role = passer.AssignedTacticalRole;
+
+            foreach (var mate in teammates)
+            {
+                if (mate == null || mate == passer || !mate.IsOnCourt || mate.IsSuspended()) continue;
+                float score = -Vector2.Distance(mate.Position, GetOpponentGoalPosition(passer.TeamSimId));
+                score += 0.02f * teamwork;
+                if ((mate.Velocity.sqrMagnitude > 1.0f)) score += 0.01f * anticipation;
+                bool isSafe = true;
+                foreach (var opp in opponents)
+                {
+                    if (opp == null || !opp.IsOnCourt || opp.IsSuspended()) continue;
+                    if (Vector2.Distance(mate.Position, opp.Position) < 2.0f) {
+                        score -= 5.0f;
+                        isSafe = false;
+                    }
+                }
+                // Handball-specific role-based logic
+                if (PlayerPositionHelper.IsWing(role))
+                {
+                    if (PlayerPositionHelper.IsBack(mate.AssignedTacticalRole)) score += 2.0f;
+                    if (mate.AssignedTacticalRole == PlayerPosition.Pivot)
+                    {
+                        if (pitchGeometry.IsNearSixMeterLine(mate.Position, mate.TeamSimId)) score += 2.5f;
+                        else score += 1.0f;
+                    }
+                    if (PlayerPositionHelper.IsWing(mate.AssignedTacticalRole) && mate.AssignedTacticalRole != role)
+                    {
+                        bool open = true;
+                        foreach (var opp in opponents)
+                        {
+                            if (opp == null || !opp.IsOnCourt) continue;
+                            if (Vector2.Distance(mate.Position, opp.Position) < 2.5f) { open = false; break; }
+                        }
+                        if (!open) score -= 2.0f;
+                    }
+                }
+                else if (PlayerPositionHelper.IsBack(role))
+                {
+                    if (PlayerPositionHelper.IsWing(mate.AssignedTacticalRole))
+                    {
+                        bool open = true;
+                        foreach (var opp in opponents)
+                        {
+                            if (opp == null || !opp.IsOnCourt) continue;
+                            if (Vector2.Distance(mate.Position, opp.Position) < 2.5f) { open = false; break; }
+                        }
+                        if (open) score += 2.0f;
+                    }
+                    if (mate.AssignedTacticalRole == PlayerPosition.Pivot && pitchGeometry.IsNearSixMeterLine(mate.Position, mate.TeamSimId)) score += 2.5f;
+                    if (role == PlayerPosition.CentreBack) score += 1.0f;
+                }
+                else if (role == PlayerPosition.Pivot)
+                {
+                    float dist = Vector2.Distance(passer.Position, mate.Position);
+                    score -= dist * 0.7f;
+                    if (PlayerPositionHelper.IsBack(mate.AssignedTacticalRole)) score += 1.0f;
+                    if (mate.AssignedTacticalRole == PlayerPosition.CentreBack) score += 1.5f;
+                    if (pitchGeometry.IsNearSixMeterLine(passer.Position, passer.TeamSimId)) score += 2.0f;
+                }
+                score += 0.01f * passing;
+                float tacticalRisk = _tacticalEvaluator?.GetRiskModifier(tactic) ?? 1f;
+                float personalityPass = _personalityEvaluator?.GetPassingTendencyModifier(passer.BaseData) ?? 1f;
+                float gameStateRisk = _gameStateEvaluator?.GetAttackRiskModifier(state, passer.TeamSimId) ?? 1f;
+                score *= tacticalRisk * personalityPass * gameStateRisk;
+                // Normalize score to 0-1 for PassOption
+                float normScore = Mathf.InverseLerp(-15f, 15f, score); // Adjust bounds as needed
+                // Heuristic: consider a pass complex if distance is > 12m or not safe
+                bool isComplex = Vector2.Distance(passer.Position, mate.Position) > 12f || !isSafe;
+                // Filter if safeOnly required
+                if (!safeOnly || isSafe)
+                {
+                    passOptions.Add(new PassOption {
+                        Player = mate,
+                        Score = normScore,
+                        IsSafe = isSafe,
+                        IsComplex = isComplex
+                    });
+                }
+            }
+            // Sort by score descending
+            passOptions.Sort((a, b) => b.Score.CompareTo(a.Score));
+            return passOptions;
+        }
+        
+        public PassOption GetBestPassOption(SimPlayer passer, MatchState state, Tactic tactic)
+        {
+            var options = EvaluatePassOptionsImpl(passer, state, tactic, false);
+            return options.Count > 0 ? options[0] : null;
+        }
+
+        public float DecideAction(SimPlayer passer, MatchState state)
+        {
+            // Retrieve the correct tactic for the passer's team
+            Tactic currentTactic = (passer.TeamId == 0) ? state.HomeTactic : state.AwayTactic;
+            if (currentTactic == null)
+            {
+                // Handle cases where the tactic might not be set yet or is invalid
+                Debug.LogWarning($"[{nameof(DefaultOffensiveDecisionMaker)}] Tactic not found for team {passer.TeamId} in DecideAction. Returning default score 0.");
+                return 0f; // Default score if tactic is missing
+            }
+
+            // Reuse the existing EvaluatePassOptions logic
+            var options = EvaluatePassOptionsImpl(passer, state, currentTactic, false);
+            return (options.Count > 0) ? options[0].Score : 0f;
+        }
+
+        public float EvaluateDribbleScore(SimPlayer dribbler, MatchState state, Tactic tactic)
+        {
+            var context = new PlayerAIContext {
+                Player = dribbler,
+                MatchState = state,
+                Tactics = tactic
+            };
+            var result = MakeDribbleDecision(context);
+            return Mathf.Clamp01(result.Confidence);
+        }
+        #endregion
     }
-}
+ }

@@ -1,3 +1,4 @@
+using HandballManager.Simulation.Engines; // Added to resolve MatchEvent type
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
@@ -40,6 +41,10 @@ namespace HandballManager.Simulation.Engines
         // --- Dynamic State ---
         /// <summary>Current elapsed time in the match simulation (seconds).</summary>
         public float MatchTimeSeconds { get; set; } = 0f;
+        /// <summary>
+        /// If true, the match clock is paused and MatchTimeSeconds will not advance.
+        /// </summary>
+        public bool IsClockPaused { get; set; } = false;
         /// <summary>Total duration of the match in seconds.</summary>
         public float MatchDurationSeconds { get; set; } = 3600f;
         /// <summary>Current score for the home team.</summary>
@@ -71,6 +76,15 @@ namespace HandballManager.Simulation.Engines
         // --- Event Log ---
         /// <summary>Log of significant events that occurred during the simulation.</summary>
         public List<MatchEvent> MatchEvents { get; } = new List<MatchEvent>();
+
+        /// <summary>Timer for team shorthanded penalty after a red card (index 0=Home, 1=Away).</summary>
+        public float[] TeamPenaltyTimer { get; private set; } = new float[2] { 0f, 0f };
+
+        /// <summary>
+        /// Indicates if passive play warning is currently active for the team in possession.
+        /// 0 = Home, 1 = Away, -1 = None
+        /// </summary>
+        public int PassivePlayWarningTeamId { get; set; } = -1;
 
         /// <summary>
         /// Returns the score difference for the specified team (0=Home, 1=Away).
@@ -164,6 +178,7 @@ namespace HandballManager.Simulation.Engines
             Ball = new SimBall(); // Ensure ball is created
             CurrentHomeStats = new TeamMatchStats(); // Ensure stats objects are created
             CurrentAwayStats = new TeamMatchStats();
+            TeamPenaltyTimer = new float[2] { 0f, 0f }; // Initialize penalty timers
 
             HomeTimeoutsUsedByHalf = new int[2];
             AwayTimeoutsUsedByHalf = new int[2];
@@ -379,6 +394,78 @@ namespace HandballManager.Simulation.Engines
             }
 
             return potentialInterceptors;
+        }
+
+        /// <summary>
+        /// Assigns the initial formation slot roles to players based on the team's offensive tactic.
+        /// Should be called *after* the MatchState is constructed and player lists are populated.
+        /// </summary>
+        public void InitializePlayerRoles()
+        {
+            AssignRolesForTeam(HomePlayersOnCourt, HomeTactic?.OffensiveFormationData, 0);
+            AssignRolesForTeam(AwayPlayersOnCourt, AwayTactic?.OffensiveFormationData, 1);
+        }
+
+        private void AssignRolesForTeam(List<SimPlayer> players, FormationData formation, int teamSimId)
+        {
+            if (players == null || formation == null || formation.Slots == null)
+            {
+                Debug.LogError($"[MatchState] Cannot assign roles for Team {teamSimId}: Player list or FormationData is null.");
+                return;
+            }
+
+            // Reset existing roles before assigning new ones
+            foreach(var player in players) {
+                if(player != null) player.AssignedFormationSlotRole = null;
+            }
+
+            HashSet<SimPlayer> assignedPlayers = new HashSet<SimPlayer>();
+            int assignedCount = 0;
+            int playerCount = players.Count(p => p != null); // Count non-null players
+
+            // Iterate through defined formation slots
+            foreach (var slot in formation.Slots)
+            {
+                if (slot == null) continue;
+
+                // Find the first *unassigned* player on the court matching the slot's associated position
+                SimPlayer playerToAssign = players.FirstOrDefault(p =>
+                    p != null &&
+                    !assignedPlayers.Contains(p) &&
+                    p.BaseData != null &&
+                    p.BaseData.PrimaryPosition == slot.AssociatedPosition);
+
+                if (playerToAssign != null)
+                {
+                    playerToAssign.AssignedFormationSlotRole = slot.RoleName;
+                    assignedPlayers.Add(playerToAssign);
+                    assignedCount++;
+                    // Debug.Log($"[MatchState] Assigned Role '{slot.RoleName}' to Player {playerToAssign.GetPlayerId()} (Team {teamSimId}) based on Position {slot.AssociatedPosition}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[MatchState] No unassigned player found for Team {teamSimId} matching slot '{slot.RoleName}' (Position: {slot.AssociatedPosition}) in formation '{formation.FormationName}'.");
+                }
+            }
+
+            // Log if not all players were assigned a role (e.g., formation has fewer slots than players on court)
+            if (assignedCount < playerCount)
+            {
+                Debug.LogWarning($"[MatchState] Team {teamSimId}: Only assigned roles to {assignedCount} out of {playerCount} players based on formation '{formation.FormationName}'. Some players may not have a specific formation role assigned.");
+                // Log unassigned players
+                foreach(var player in players)
+                {
+                    if(player != null && !assignedPlayers.Contains(player))
+                    {
+                         Debug.LogWarning($"[MatchState] Team {teamSimId}: Player {player.GetPlayerId()} ({player.BaseData?.PrimaryPosition}) remains unassigned.");
+                    }
+                }
+            }
+             // Log if not all slots were filled (e.g., fewer players than slots)
+            if (assignedCount < formation.Slots.Count)
+            {
+                 Debug.LogWarning($"[MatchState] Team {teamSimId}: Only filled {assignedCount} out of {formation.Slots.Count} slots in formation '{formation.FormationName}'. Some slots may be empty.");
+            }
         }
     }
 }

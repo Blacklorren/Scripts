@@ -38,5 +38,11 @@ namespace HandballManager.Simulation.AI.Decision // This namespace is already co
         /// <param name="tactic">The team's current tactic.</param>
         /// <returns>The best PassOption, or null if no suitable options exist.</returns>
         PassOption GetBestPassOption(SimPlayer passer, MatchState state, Tactic tactic);
+
+        /// <summary>
+        /// Returns a float score representing the desirability of passing in the current context.
+        /// </summary>
+        float DecideAction(SimPlayer passer, MatchState state);
+
     }
 }

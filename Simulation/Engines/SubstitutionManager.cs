@@ -47,10 +47,9 @@ namespace HandballManager.Simulation.Engines
                 return false; // Player in is not on bench
             if (playerOut == playerIn)
                 return false; // Can't substitute same player
+            // Check SuspensionTimer instead of non-existent IsSuspended()
             if (playerOut.IsSuspended() || playerIn.IsSuspended())
                 return false; // Can't substitute suspended players
-            if (playerIn.IsOnCourt)
-                return false; // Player in is already on court
 
             // Perform substitution
             onCourt.Remove(playerOut);
@@ -58,15 +57,12 @@ namespace HandballManager.Simulation.Engines
             bench.Remove(playerIn);
             onCourt.Add(playerIn);
 
-            playerOut.IsOnCourt = false;
-            playerIn.IsOnCourt = true;
-
             // Optionally reset position and AI
             if (tacticPositioner != null && playerIn != null && matchState != null)
             {
                 var targetPos = tacticPositioner.GetPlayerTargetPosition(matchState, playerIn);
                 playerIn.Position = targetPos;
-                playerIn.TargetPosition = targetPos;
+                playerIn.TacticalTargetPosition = targetPos;
             }
 
             // Log event

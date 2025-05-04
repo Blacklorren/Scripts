@@ -20,7 +20,8 @@ namespace HandballManager.Simulation.Events.Calculators
         {
             float pressure = 0f;
             if (player == null || state == null) return 0f;
-            var opponents = state?.GetOpposingTeamOnCourt(player?.TeamSimId ?? -1);
+            // Corrected property access from TeamSimId to TeamId
+            var opponents = state?.GetOpposingTeamOnCourt(player?.TeamId ?? -1);
             if (opponents == null) return 0f;
 
             foreach(var opponent in opponents) {
@@ -49,9 +50,10 @@ namespace HandballManager.Simulation.Events.Calculators
         /// </summary>
         public static bool IsTackleFromBehind(SimPlayer tackler, SimPlayer target) {
              if (tackler == null || target == null) return false;
-             if (target.Velocity.sqrMagnitude < MIN_TACKLE_APPROACH_ANGLE) return false; // Target needs to be moving
+             // Check if target is moving by checking the magnitude of CurrentMovementDirection
+             if (target.CurrentMovementDirection.sqrMagnitude < 0.0001f) return false; // Target needs to be moving
 
-             Vector2 targetMovementDir = target.Velocity.normalized;
+             Vector2 targetMovementDir = target.CurrentMovementDirection;
              Vector2 approachDir = (target.Position - tackler.Position);
              if(approachDir.sqrMagnitude < ActionResolverConstants.MIN_DISTANCE_CHECK_SQ) return false; // Avoid issues if overlapping
              approachDir.Normalize();
@@ -67,7 +69,7 @@ namespace HandballManager.Simulation.Events.Calculators
          /// </summary>
          public static float CalculateClosingSpeed(SimPlayer playerA, SimPlayer playerB) {
               if (playerA == null || playerB == null) return 0f;
-              Vector2 relativeVelocity = playerA.Velocity - playerB.Velocity;
+              Vector2 relativeVelocity = playerA.CurrentMovementDirection - playerB.CurrentMovementDirection;
               Vector2 axisToTarget = (playerB.Position - playerA.Position);
               if (axisToTarget.sqrMagnitude < ActionResolverConstants.MIN_DISTANCE_CHECK_SQ) return 0f;
 

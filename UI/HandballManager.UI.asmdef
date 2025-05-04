@@ -1,0 +1,20 @@
+{
+    "name": "HandballManager.UI",
+    "rootNamespace": "",
+    "references": [
+        "GUID:682841d05faa25e46a3827fd2b5fd342",
+        "GUID:e2c4c21ea8b4899459523ff8d385ad6b",
+        "GUID:47605065c65db0e46bdad3b03c04de7b",
+        "GUID:6055be8ebefd69e48b49212b09b47b2f",
+        "GUID:b91ac63fafb315a498f112a900c49c63"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

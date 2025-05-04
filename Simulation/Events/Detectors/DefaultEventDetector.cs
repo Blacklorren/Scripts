@@ -32,7 +32,7 @@ namespace HandballManager.Simulation.Events.Detectors
             if (state == null || state.CurrentPhase == GamePhase.Finished) return;
             CheckForInterceptions(state, actionResolver, eventHandler); if (state.CurrentPhase == GamePhase.Finished) return;
             CheckForBlocks(state, actionResolver, eventHandler); if (state.CurrentPhase == GamePhase.Finished) return;
-            CheckForSaves(state, actionResolver, eventHandler); if (state.CurrentPhase == GamePhase.Finished) return;
+
             CheckForLooseBallPickup(state, eventHandler);
         }
 
@@ -67,7 +67,7 @@ namespace HandballManager.Simulation.Events.Detectors
                          eventHandler.HandleActionResult(result, state); // Use injected handler
                          return;
                      }
-                      if (defender.CurrentAction == PlayerAction.AttemptingIntercept) {
+                      if (defender.CurrentAction == PlayerAction.Intercepting) {
                           eventHandler.ResetPlayerActionState(defender, ActionResultOutcome.Failure); // Use handler
                      }
                  } catch (Exception ex) { Debug.LogError($"Error checking interception for defender {defender.GetPlayerId()}: {ex.Message}"); }
@@ -111,134 +111,6 @@ namespace HandballManager.Simulation.Events.Detectors
             }
         }
 
-        private void CheckForSaves(MatchState state, IActionResolver actionResolver, IMatchEventHandler eventHandler)
-        {
-             // --- Logic copied from MatchSimulator ---
-             // Assumes ball physics are calculated elsewhere (e.g., IBallPhysicsCalculator injected if needed)
-             if (state?.Ball?.LastShooter == null || !state.Ball.IsInFlight) return;
-             int defendingTeamSimId = 1 - state.Ball.LastShooter.TeamSimId;
-             SimPlayer gk = state.GetGoalkeeper(defendingTeamSimId);
-             if (gk == null || gk.IsSuspended()) return;
-
-             try {
-                 float goalLineX = (defendingTeamSimId == 0) ? 0f : _geometry.PitchLength;
-                 Vector3 ballPos3D = state.Ball.Position;
-                 Vector3 ballVel3D = state.Ball.Velocity;
-                 float nextPosX = ballPos3D.x + ballVel3D.x * SimConstants.FLOAT_EPSILON * 10f; // Use small time step like 0.01f or TIME_STEP_SECONDS? Use fixed small lookahead
-
-                 bool headingTowardsGoalPlane =
-                     (defendingTeamSimId == 0 && ballVel3D.x < -0.1f && nextPosX <= goalLineX + ActionResolverConstants.GOAL_LINE_BUFFER) ||
-                     (defendingTeamSimId == 1 && ballVel3D.x > 0.1f && nextPosX >= goalLineX - ActionResolverConstants.GOAL_LINE_BUFFER);
-
-                 if (!headingTowardsGoalPlane) return;
-
-                 // Simplified save chance calculation (ActionResolver doesn't have one currently)
-                 // Need ball physics calculator if predicting impact accurately
-                 // Vector3 predictedImpact3D = _ballPhysics.EstimateBallGoalLineImpact3D(state.Ball, defendingTeamSimId); // Assumes injected physics
-                 Vector3 predictedImpact3D = ballPos3D + ballVel3D * 0.1f; // Simple forward prediction
-
-                 Vector3 gkPos3D = CoordinateUtils.To3DGround(gk.Position, _geometry.Center.y);
-                 float distanceToImpact = Vector3.Distance(gkPos3D, predictedImpact3D);
-                 float ballSpeed = Mathf.Max(1f, ballVel3D.magnitude);
-                 float timeToImpact = (ballSpeed > 0.1f) ? distanceToImpact / ballSpeed : 10f;
-                 float agilityFactor = Mathf.Lerp(0.8f, 1.2f, (gk.BaseData?.Agility ?? 50f) / 100f);
-                 float reachDistance = gk.EffectiveSpeed * timeToImpact * agilityFactor;
-
-                 if (distanceToImpact < reachDistance + SimConstants.BALL_RADIUS + SAVE_REACH_BUFFER) 
-                 {
-                     // --- Enhanced, data-driven save probability calculation ---
-                     float saveProb = ActionResolverConstants.BASE_SAVE_PROBABILITY;
-
-                     float shotDistance = Vector3.Distance(predictedImpact3D, gkPos3D);
-                     Vector2 goalCenter2D = CoordinateUtils.To2DGround(_geometry.GetOpponentGoalCenter(state.Ball.LastShooter.TeamSimId));
-                     Vector2 impact2D = CoordinateUtils.To2DGround(predictedImpact3D);
-                     Vector2 shooter2D = state.Ball.LastShooter.Position;
-
-                     // Angle between shooter and goal center (for wide shots)
-                     float angleToGoal = Vector2.Angle(goalCenter2D - shooter2D, impact2D - shooter2D);
-
-                     // --- Distance-based modifier ---
-                     float saveDistanceMod = 1f;
-                     if (shotDistance <= 7f) // Close range: 6-7m
-                     {
-                         saveDistanceMod = 0.85f; // Harder to save
-                     }
-                     else if (shotDistance >= 13f) // Long shot
-                     {
-                         saveDistanceMod = 1.15f; // Easier to save
-                     }
-                     else
-                     {
-                         float t = (shotDistance - 7f) / (13f - 7f);
-                         saveDistanceMod = Mathf.Lerp(0.85f, 1.15f, t);
-                     }
-                     saveProb *= saveDistanceMod;
-
-                     // --- Attribute weighting based on context ---
-                     float reflex = gk.BaseData?.Reflexes ?? 50f;
-                     float oneOnOnes = gk.BaseData?.OneOnOnes ?? 50f;
-                     float handling = gk.BaseData?.Handling ?? 50f;
-                     float positioning = gk.BaseData?.PositioningGK ?? 50f;
-                     float penaltySaving = gk.BaseData?.PenaltySaving ?? 50f;
-
-                     // Penalty phase: use PenaltySaving
-                     if (state.CurrentPhase == GamePhase.HomePenalty || state.CurrentPhase == GamePhase.AwayPenalty)
-                     {
-                          // Non-linear: Use sigmoid for penalty saving
-                          float penaltySavingSigmoid = Sigmoid((penaltySaving - 50f) / 20f);
-                          saveProb *= Mathf.Lerp(0.8f, 1.2f, penaltySavingSigmoid);
-                     }
-                     else if (shotDistance <= 7f) // Close range: Reflexes & OneOnOnes
-                     {
-                         float closeWeight = 0.6f * (reflex / 100f) + 0.4f * (oneOnOnes / 100f);
-                          // Non-linear: Use sigmoid for closeWeight
-                          float closeWeightSigmoid = Sigmoid((closeWeight - 0.5f) * 6f);
-                          saveProb *= Mathf.Lerp(0.7f, 1.3f, closeWeightSigmoid); // Stronger impact
-                     }
-                     else if (angleToGoal > 30f) // Wide angle: PositioningGK
-                     {
-                          // Non-linear: Use sigmoid for positioning
-                          float positioningSigmoid = Sigmoid((positioning - 50f) / 20f);
-                          saveProb *= Mathf.Lerp(0.8f, 1.2f, positioningSigmoid);
-                     }
-                     else // Default: Reflexes & Positioning
-                     {
-                         float baseWeight = 0.5f * (reflex / 100f) + 0.5f * (positioning / 100f);
-                          // Non-linear: Use sigmoid for baseWeight
-                          float baseWeightSigmoid = Sigmoid((baseWeight - 0.5f) * 6f);
-                          saveProb *= Mathf.Lerp(0.85f, 1.15f, baseWeightSigmoid);
-                     }
-
-                     // Powerful shots: Handling reduces penalty from power
-                     float shooterPower = state.Ball.LastShooter?.BaseData?.ShootingPower ?? 50f;
-                      // Non-linear: Use sigmoid for shooter power and handling
-                      float shooterPowerSigmoid = Sigmoid((shooterPower - 50f) / 20f);
-                      float powerPenalty = Mathf.Lerp(1.0f, 0.85f, shooterPowerSigmoid); // More power = lower save chance
-                      float handlingSigmoid = Sigmoid((handling - 50f) / 20f);
-                      float handlingMitigation = Mathf.Lerp(1.0f, 1.08f, handlingSigmoid); // Better handling = mitigates power
-                      saveProb *= powerPenalty * handlingMitigation;
-
-                     // Shooter accuracy: more accurate = harder to save
-                     float shooterAccuracy = state.Ball.LastShooter?.BaseData?.ShootingAccuracy ?? 50f;
-                      // Non-linear: Use sigmoid for shooter accuracy
-                      float shooterAccuracySigmoid = Sigmoid((shooterAccuracy - 50f) / 20f);
-                      saveProb *= Mathf.Lerp(1.05f, 0.85f, shooterAccuracySigmoid);
-
-                     // Clamp for safety
-                     saveProb = Mathf.Clamp(saveProb, 0.01f, 0.99f);
-
-                     // --- End enhanced calculation ---
-
-
-                     if (state.RandomGenerator.NextDouble() < Mathf.Clamp01(saveProb)) {
-                         ActionResult result = new ActionResult { Outcome = ActionResultOutcome.Saved, PrimaryPlayer = gk, SecondaryPlayer = state.Ball.LastShooter, ImpactPosition = CoordinateUtils.To2DGround(predictedImpact3D) };
-                         eventHandler.HandleActionResult(result, state); // Use handler
-                         return;
-                     }
-                }
-            } catch (Exception ex) { Debug.LogError($"Error checking save for GK {gk.GetPlayerId()}: {ex.Message}"); }
-        }
-
         private void CheckForLooseBallPickup(MatchState state, IMatchEventHandler eventHandler)
         {
             // --- Logic copied from MatchSimulator ---
@@ -250,9 +122,9 @@ namespace HandballManager.Simulation.Events.Detectors
             Vector2 ballPos2D = CoordinateUtils.To2DGround(state.Ball.Position);
 
             try {
-                 // Prioritize players actively chasing
+                 // Prioritize players actively moving to the ball position
                  potentialPicker = players
-                    .Where(p => p != null && !p.IsSuspended() && p.CurrentAction == PlayerAction.ChasingBall)
+                    .Where(p => p != null && !p.IsSuspended() && p.CurrentAction == PlayerAction.MovingToPosition)
                     .OrderBy(p => (p.Position - ballPos2D).sqrMagnitude)
                     .FirstOrDefault(p => (p.Position - ballPos2D).sqrMagnitude < minPickDistanceSq);
 
@@ -260,7 +132,7 @@ namespace HandballManager.Simulation.Events.Detectors
                  if (potentialPicker == null)
                  {
                     potentialPicker = players
-                        .Where(p => p != null && !p.IsSuspended() && p.CurrentAction != PlayerAction.Fallen && p.CurrentAction != PlayerAction.ChasingBall)
+                        .Where(p => p != null && !p.IsSuspended() && p.CurrentAction != PlayerAction.Landing && p.CurrentAction != PlayerAction.MovingToPosition)
                         .OrderBy(p => (p.Position - ballPos2D).sqrMagnitude)
                         .FirstOrDefault(p => (p.Position - ballPos2D).sqrMagnitude < minPickDistanceSq && (p.BaseData?.Technique ?? 0) > ActionResolverConstants.MIN_PICKUP_TECHNIQUE
                   && (p.BaseData?.Anticipation ?? 0) > ActionResolverConstants.MIN_PICKUP_ANTICIPATION);

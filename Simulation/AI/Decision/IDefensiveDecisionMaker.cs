@@ -28,13 +28,6 @@ namespace HandballManager.Simulation.AI.Decision // Updated namespace to match n
         /// <param name="tactic">The team's current tactic.</param>
         /// <returns>A DefensiveAction object containing the chosen action and target details.</returns>
         DefensiveAction DecideDefensiveAction(SimPlayer player, MatchState state, Tactic tactic);
-
-        /// <summary>
-        /// Makes a tackle decision based on player context.
-        /// </summary>
-        /// <param name="context">The current AI context containing player and match information.</param>
-        /// <returns>A DecisionResult representing the tackle decision.</returns>
-        DecisionResult MakeTackleDecision(PlayerAIContext context);
     }
 }
 // --- END OF FILE HandballManager/Simulation/AI/Decision/IDefensiveDecisionMaker.cs ---

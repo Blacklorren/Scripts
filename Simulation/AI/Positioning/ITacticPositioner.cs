@@ -61,5 +61,16 @@ namespace HandballManager.Simulation.AI.Positioning // Updated to match new fold
         /// Positions players for a goal throw situation.
         /// </summary>
         void PositionForGoalThrow(MatchState state);
+
+        /// <summary>
+        /// Returns a basic screen spot for the screener (e.g., pivot) to set a screen for a target teammate.
+        /// This is a simple implementation: places the screener between the defender and the teammate, offset by a small distance.
+        /// </summary>
+        Vector2 GetScreenSpotForScreener(SimPlayer screener, SimPlayer targetTeammate, SimPlayer defender, float offset = 0.7f);
+
+        /// <summary>
+        /// Returns the angle (in degrees) between defender, screener, and screen user (for evaluating screen effectiveness).
+        /// </summary>
+        float GetScreenAngleBetweenDefenderAndTarget(SimPlayer defender, SimPlayer screener, SimPlayer user);
     }
 }

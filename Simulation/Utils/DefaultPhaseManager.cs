@@ -93,13 +93,32 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
         }
 
         /// <summary>
-        /// Transitions the match to a new game phase.
+        /// Transitions the match to a new game phase and determines if setup is required.
+        /// Sets _setupPending only for phases that require player/ball setup (see list below).
         /// </summary>
         /// <param name="state">Current match state</param>
         /// <param name="newPhase">The new phase to transition to</param>
         /// <param name="forceSetup">Whether to force setup for the new phase</param>
         public void TransitionToPhase(MatchState state, GamePhase newPhase, bool forceSetup = false)
         {
+            // --- Clock pausing logic ---
+            // Pause clock for Timeout, HalfTime, Penalty, SetPiece, and PreKickOff
+            switch (newPhase)
+            {
+                case GamePhase.Timeout:
+                case GamePhase.HalfTime:
+                case GamePhase.HomePenalty:
+                case GamePhase.AwayPenalty:
+                case GamePhase.HomeSetPiece:
+                case GamePhase.AwaySetPiece:
+                case GamePhase.PreKickOff:
+                    state.IsClockPaused = true;
+                    break;
+                default:
+                    state.IsClockPaused = false;
+                    break;
+            }
+            // --- End clock pausing logic ---
              if (state == null) {
                  Debug.LogError("[DefaultPhaseManager] Cannot transition phase: MatchState is null.");
                  return;
@@ -111,16 +130,21 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
 
              state.CurrentPhase = newPhase;
 
+             // Only these phases require setup (see ExecutePhaseSetup):
+             // PreKickOff, HomeSetPiece, AwaySetPiece, HomePenalty, AwayPenalty, HalfTime, or forceSetup == true
              if (forceSetup || newPhase == GamePhase.PreKickOff || newPhase == GamePhase.HomeSetPiece ||
                  newPhase == GamePhase.AwaySetPiece || newPhase == GamePhase.HomePenalty ||
                  newPhase == GamePhase.AwayPenalty || newPhase == GamePhase.HalfTime)
              {
-                 _setupPending = true;
+                 _setupPending = true; // Set _setupPending for phases that require setup
              }
         }
 
         /// <summary>
         /// Handles pending phase transitions and executes automatic phase transitions.
+        /// If a setup is pending (e.g., after entering a phase that requires setup), executes the required setup.
+        /// If setup fails, transitions to ContestedBall and resets possession.
+        /// Then, checks if an automatic phase transition is required (e.g., KickOff → HomeAttack).
         /// </summary>
         /// <param name="state">Current match state</param>
         public void HandlePhaseTransitions(MatchState state)
@@ -140,8 +164,27 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
                  }
              }
              ExecuteAutomaticPhaseTransitions(state);
+             // Runtime assertion for valid phase transitions
+             GamePhase phaseAfter = state.CurrentPhase;
+             Debug.Assert(
+                 phaseAfter == phaseBeforeSetup ||
+                 (phaseBeforeSetup == GamePhase.PreKickOff && phaseAfter == GamePhase.KickOff) ||
+                 (phaseBeforeSetup == GamePhase.KickOff && (phaseAfter == GamePhase.HomeAttack || phaseAfter == GamePhase.AwayAttack)) ||
+                 (phaseBeforeSetup == GamePhase.TransitionToHomeAttack && phaseAfter == GamePhase.HomeAttack) ||
+                 (phaseBeforeSetup == GamePhase.TransitionToAwayAttack && phaseAfter == GamePhase.AwayAttack) ||
+                 (phaseBeforeSetup == GamePhase.HalfTime && phaseAfter == GamePhase.PreKickOff),
+                 $"[DefaultPhaseManager] Unexpected phase transition: {phaseBeforeSetup} -> {phaseAfter}"
+             );
         }
 
+        /// <summary>
+        /// Executes setup logic for phases that require special player/ball positioning or state changes.
+        /// Only called for phases where _setupPending was set (see TransitionToPhase).
+        /// Returns true if setup succeeds, false if setup fails and a fallback is needed.
+        /// </summary>
+        /// <param name="state">Current match state</param>
+        /// <param name="currentPhase">Phase to set up</param>
+        /// <returns>True if setup succeeded, false otherwise</returns>
         private bool ExecutePhaseSetup(MatchState state, GamePhase currentPhase)
         {
              if (state == null) { Debug.LogError("[DefaultPhaseManager] Cannot execute phase setup: MatchState is null."); return false; }
@@ -151,7 +194,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
                  case GamePhase.PreKickOff:
                      int startingTeamId = DetermineKickoffTeam(state);
                      setupSuccess = SetupForKickOff(state, startingTeamId);
-                     if (setupSuccess) _eventHandler.LogEvent(state, $"Setup for Kickoff. Team {startingTeamId} starts.", GetTeamIdFromSimId(state, startingTeamId));
+                     if (setupSuccess) _eventHandler.LogEvent(state, $"Setup for Kickoff. Team {startingTeamId} starts.", startingTeamId);
                      break;
                  case GamePhase.HomeSetPiece: case GamePhase.AwaySetPiece:
                       setupSuccess = SetupForSetPiece(state);
@@ -165,7 +208,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
                       setupSuccess = SetupForHalfTime(state);
                       if (setupSuccess) _eventHandler.LogEvent(state, "Half Time setup actions completed.");
                       break;
-                 // Other cases have no setup
+                 // Other phases do not require setup
                  case GamePhase.KickOff: case GamePhase.HomeAttack: case GamePhase.AwayAttack:
                  case GamePhase.TransitionToHomeAttack: case GamePhase.TransitionToAwayAttack:
                  case GamePhase.ContestedBall: case GamePhase.Timeout: case GamePhase.Finished:
@@ -175,6 +218,12 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
              return setupSuccess;
         }
 
+        /// <summary>
+        /// Handles automatic transitions between phases that do not require user input or additional setup.
+        /// For example, after KickOff setup, transitions to HomeAttack/AwayAttack; after TransitionToHomeAttack, transitions to HomeAttack, etc.
+        /// Does nothing for Finished, HalfTime, or Timeout phases.
+        /// </summary>
+        /// <param name="state">Current match state</param>
         private void ExecuteAutomaticPhaseTransitions(MatchState state)
         {
              if (state == null) return;
@@ -185,6 +234,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
              switch (currentPhase)
              {
                  case GamePhase.KickOff:
+                       // After kickoff, automatically start the attack for the team in possession
                        if(state.PossessionTeamId == 0 || state.PossessionTeamId == 1) {
                            nextPhase = (state.PossessionTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack;
                        } else { Debug.LogWarning($"[DefaultPhaseManager] Invalid possession ({state.PossessionTeamId}) after KickOff setup."); }
@@ -350,7 +400,7 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
                    Vector3 goalCenter3D = defendingTeamId == 0 ? _geometry.HomeGoalCenter3D : _geometry.AwayGoalCenter3D;
                    Vector2 gkPos2D = new Vector2(goalCenter3D.x + (defendingTeamId == 0 ? DEF_GK_DEPTH : -DEF_GK_DEPTH), goalCenter3D.z);
                    gk.Position = gkPos2D;
-                   gk.TargetPosition = gk.Position; gk.CurrentAction = PlayerAction.GoalkeeperPositioning;
+                   gk.TargetPosition = gk.Position; gk.CurrentAction = PlayerAction.GoalkeeperSaving;
               } else { Debug.LogWarning($"No Goalkeeper found for defending team {defendingTeamId} during penalty setup."); }
 
               Vector2 opponentGoalCenter2D = shootingHome ? CoordinateUtils.To2DGround(_geometry.AwayGoalCenter3D) : CoordinateUtils.To2DGround(_geometry.HomeGoalCenter3D);

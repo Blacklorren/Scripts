@@ -168,6 +168,9 @@ namespace HandballManager.Simulation.Events.Calculators
                 // Release the ball towards the target
                 state.Ball.ReleaseAsPass(passer, target, finalInitialVelocity);
 
+                passer.HasBall = false;
+                state.Ball.SetHolder(null);
+
                 return new ActionResult { Outcome = ActionResultOutcome.Success, PrimaryPlayer = passer, SecondaryPlayer = target, Reason = "Pass Released Accurately" };
             }
             else
@@ -219,87 +222,39 @@ namespace HandballManager.Simulation.Events.Calculators
         public float CalculatePassAccuracy(SimPlayer passer, SimPlayer target, MatchState state, float? distance = null)
         {
             // Basic validation
-            // Note: These checks might be redundant if called only from ResolvePassAttempt which already validates.
-            // However, if this method could be called externally, these checks are essential.
             if (passer?.BaseData == null || target == null || state == null)
             {
                 Debug.LogError("CalculatePassAccuracy called with invalid parameters.");
                 return 0f;
             }
 
-            // Start with the base accuracy defined in constants
-            float accuracyChance = ActionResolverConstants.BASE_PASS_ACCURACY;
+            float baseAcc = ActionResolverConstants.BASE_PASS_ACCURACY;
+            float avgSkill = (passer.BaseData.Passing + passer.BaseData.DecisionMaking + passer.BaseData.Technique) / 3f;
+            float attrScore = Sigmoid((avgSkill - 50f) / 15f);
 
-            // --- Factor 1: Player Skills ---
-            // Combine relevant skills with weighting factors
-            // Ensure division by 300 if weights sum to 1 and attributes are 0-100. Or normalize differently.
-            // Assuming weights add up to 1 here for a 0-100 combined skill score.
-            float passSkill = (passer.BaseData.Passing * ActionResolverConstants.PASS_SKILL_WEIGHT_PASSING +
-                       passer.BaseData.DecisionMaking * ActionResolverConstants.PASS_SKILL_WEIGHT_DECISION +
-                       passer.BaseData.Technique * ActionResolverConstants.PASS_SKILL_WEIGHT_TECHNIQUE);
+            float distVal = distance ?? Vector2.Distance(passer.Position, target.Position);
+            float distFactor = Mathf.Exp(-distVal / ActionResolverConstants.PITCH_LENGTH);
 
-            // --- Skill Modifier: Non-linear S-curve (sigmoid) ---
-            float clampedSkill = Mathf.Clamp(passSkill, 0f, 100f);
-            float skillFactor = Sigmoid((clampedSkill - 50f) / 20f); // S-curve, steepness tuned by divisor
-            accuracyChance *= Mathf.Lerp(ActionResolverConstants.PASS_ACCURACY_SKILL_MIN_MOD,
-                                         ActionResolverConstants.PASS_ACCURACY_SKILL_MAX_MOD,
-                                         skillFactor); // S-curve: improvements matter most at mid-range
-
-            // --- Distance Penalty: Non-linear power curve ---
-            float concentrationNoise = UnityEngine.Random.Range(0f, 0.02f) * (1.0f - (passer.BaseData.Concentration / 100f)); // Vision reduces penalty
-            float dist = distance ?? Vector2.Distance(passer.Position, target.Position);
-            float normalizedDist = Mathf.Clamp01(dist / 20f); // 0 at 0m, 1 at 20m (tune max distance as needed)
-            float distancePenaltyFactor = Mathf.Pow(normalizedDist, 1.5f); // Power > 1: gentle at short, sharper at long
-            float distancePenalty = distancePenaltyFactor * ActionResolverConstants.PASS_DISTANCE_MAX_PENALTY_ABS;
-            accuracyChance -= distancePenalty;
-
-            // --- Agility : réduit l'impact de la pression sur la précision de la passe ---
-            float agilityMod = Mathf.Lerp(1.0f, 0.9f, passer.BaseData.Agility / 100f); // Agilité élevée = -10% pénalité pression
-
-            // --- Teamwork : améliore la réussite si le receveur a aussi un bon Teamwork ---
-            float teamworkMod = Mathf.Lerp(1.0f, 1.05f, Mathf.Min(passer.BaseData.Teamwork, target.BaseData.Teamwork) / 100f); // Bonus max +5%
-
-            // --- Leadership : réduit la pénalité de pression pour les passes clés ---
-            float leadershipMod = Mathf.Lerp(1.0f, 0.97f, passer.BaseData.Leadership / 100f); // Bonus max -3%
-
-            // --- WorkRate & Stamina : réduisent la pénalité de fatigue ---
             float pressure = ActionCalculatorUtils.CalculatePressureOnPlayer(passer, state);
-            float pressureEffectiveness = pressure * (1.0f - (passer.BaseData.Composure / 120f));
-            // --- Pressure Penalty: Non-linear (power) scaling ---
-            float basePressureEffect = Mathf.Pow(pressure, 1.2f) * ActionResolverConstants.PASS_PRESSURE_FACTOR;
-            float composureModifier = Mathf.Lerp(0f, ActionResolverConstants.PASS_COMPOSURE_MAX_EFFECT, passer.BaseData.Composure / 100f);
-            float pressurePenalty = basePressureEffect * (1.0f - composureModifier);
-            accuracyChance -= pressurePenalty;
+            float pressNorm = Mathf.Clamp01(pressure / ActionResolverConstants.MAX_PRESSURE_DIST);
+            float pressFactor = 1f - pressNorm * pressNorm;
 
-            // --- Fatigue Penalty: Non-linear thresholded scaling ---
-            float fatigueLevel = 1.0f - (passer.Stamina / 100f);
-            float effectiveFatigue = Mathf.Clamp01((fatigueLevel - 0.3f) / 0.7f); // Minimal effect until moderate fatigue
-            float workRateMod = Mathf.Lerp(1.0f, 0.92f, passer.BaseData.WorkRate / 100f); // Bonus max -8% pénalité fatigue
-            float staminaMod = Mathf.Lerp(1.0f, 0.95f, passer.Stamina / 100f); // Bonus max -5% pénalité fatigue
-            float nonLinearFatigue = PowerCurve(effectiveFatigue, 1.7f); // Power > 1: gentle at low, harsher at high
-            float fatiguePenalty = nonLinearFatigue * ActionResolverConstants.PASS_FATIGUE_FACTOR * workRateMod * staminaMod;
-                accuracyChance -= fatiguePenalty;
-                #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Debug.Log($"[Stamina] Player {passer.BaseData?.FullName} stamina: {passer.Stamina:F2}, penalty: {fatiguePenalty:F2}");
-                #endif
-            
+            // --- Fatigue Penalty (Stamina) ---
+            float stamina = passer.Stamina;
+            float fatigueThreshold = 0.5f; // Penalty starts below 50% stamina
+            float maxFatiguePenalty = 0.3f; // Max 30% reduction in accuracy due to fatigue
+            float fatiguePenaltyFactor = 1.0f; // Default: no penalty
+            if (stamina < fatigueThreshold)
+            {
+                // Non-linear scaling: penalty increases quadratically as stamina drops below threshold
+                fatiguePenaltyFactor = 1.0f - (Mathf.Pow((fatigueThreshold - stamina) / fatigueThreshold, 2.0f) * maxFatiguePenalty);
+            }
 
-            // --- Factor 5: Target Openness ---
-            accuracyChance *= teamworkMod;
+            float noiseSigma = 0.02f;
+            float noise = (float)(state.RandomGenerator.NextDouble() * noiseSigma - noiseSigma / 2f);
 
-            // Documentation attributs :
-            // - Vision : réduit la pénalité de distance
-            // - Agility : réduit la pénalité de pression
-            // - Teamwork : bonus si passe entre joueurs synchronisés
-            // - WorkRate & Stamina : réduisent la pénalité de fatigue
-            // - Positioning : bonus si receveur bien placé
-            // - Leadership : réduit la pénalité de pression
-
-            float targetOpenness = ActionCalculatorUtils.CalculatePlayerOpenness(target, state);
-            accuracyChance *= Mathf.Lerp(ActionResolverConstants.OPENNESS_MIN_FACTOR, 1.0f, targetOpenness);
-
-            // --- Final Step: Clamp Result ---
-            // Ensure the final accuracy chance is within the valid probability range [0, 1]
+            // Apply fatigue penalty factor
+            float accuracyChance = baseAcc * attrScore * distFactor * pressFactor * fatiguePenaltyFactor + noise;
             return Mathf.Clamp01(accuracyChance);
         }
 

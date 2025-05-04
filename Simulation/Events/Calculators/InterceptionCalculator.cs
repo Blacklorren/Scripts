@@ -106,17 +106,17 @@ namespace HandballManager.Simulation.Events.Calculators
             float awarenessSigmoid = Sigmoid((awareness - 0.5f) * 6f); // Centered at 0.5, steepness tuned
             finalChance *= Mathf.Lerp(ActionResolverConstants.AWARENESS_MIN_FACTOR, ActionResolverConstants.AWARENESS_MAX_FACTOR, awarenessSigmoid);
 
-            // --- Stamina Penalty (fatigue = 1 - Stamina) ---
-            if (ActionResolverConstants.INTERCEPTION_FATIGUE_MAX_EFFECT > 0)
+            // --- Fatigue Penalty (Stamina) ---
+            float stamina = defender.Stamina;
+            float fatigueThreshold = 0.5f; // Penalty starts below 50% stamina
+            float maxFatiguePenalty = 0.20f; // Max 20% reduction in success chance due to fatigue
+            float fatiguePenaltyFactor = 1.0f; // Default: no penalty
+            if (stamina < fatigueThreshold)
             {
-                float fatigueEffect = Mathf.Lerp(ActionResolverConstants.INTERCEPTION_FATIGUE_MIN_EFFECT,
-                    ActionResolverConstants.INTERCEPTION_FATIGUE_MAX_EFFECT,
-                    1f - defender.Stamina);
-                finalChance *= (1f - fatigueEffect);
-                #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Debug.Log($"[Stamina] Defender {defender.BaseData?.FullName} stamina: {defender.Stamina:F2}, effect: {fatigueEffect:F2}");
-                #endif
+                // Non-linear scaling: penalty increases quadratically as stamina drops below threshold
+                fatiguePenaltyFactor = 1.0f - (Mathf.Pow((fatigueThreshold - stamina) / fatigueThreshold, 2.0f) * maxFatiguePenalty);
             }
+            finalChance *= fatiguePenaltyFactor;
 
             return Mathf.Clamp01(finalChance);
         }

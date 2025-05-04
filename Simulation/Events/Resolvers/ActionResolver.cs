@@ -60,14 +60,14 @@ namespace HandballManager.Simulation.Events.Resolvers
                 case PlayerAction.PreparingShot:
                     return _shotCalculator.ResolveShotAttempt(player, state, evaluator);
 
-                case PlayerAction.AttemptingTackle:
+                case PlayerAction.Tackling:
                     // Tackle Calculator handles target validation and player state reset
                     return _tackleCalculator.ResolveTackleAttempt(player, state);
 
                 default:
                     Debug.LogWarning($"ActionResolver: Attempting to resolve unhandled prepared action: {actionToResolve}");
                     // Ensure state is reset if not already done
-                    if (actionToResolve != PlayerAction.AttemptingTackle) {
+                    if (actionToResolve != PlayerAction.Tackling) {
                          // Already reset above
                     } else {
                          player.CurrentAction = PlayerAction.Idle; // Reset tackle state if default hit

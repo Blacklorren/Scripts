@@ -351,9 +351,9 @@ namespace HandballManager.Simulation.AI.Positioning // Updated from Engines to A
             {
                 if (player == null) continue;
                 // Assign the tactical role for defensive logic
-                player.AssignedTacticalRole = player.BaseData.PrimaryPosition;
+                player.TacticalRole = player.BaseData.PrimaryPosition;
                 Vector2 targetPos = GetPlayerTargetPosition(player, state);
-                Debug.Log($"[TacticPositioner] Defensive player {player.GetPlayerId()} assigned role: {player.AssignedTacticalRole} target position: {targetPos}");
+                Debug.Log($"[TacticPositioner] Defensive player {player.GetPlayerId()} assigned role: {player.TacticalRole} target position: {targetPos}");
             }
         }
 
@@ -380,9 +380,9 @@ namespace HandballManager.Simulation.AI.Positioning // Updated from Engines to A
             {
                 if (player == null) continue;
                 // Assign the tactical role for offensive logic
-                player.AssignedTacticalRole = player.BaseData.PrimaryPosition;
+                player.TacticalRole = player.BaseData.PrimaryPosition;
                 Vector2 targetPos = GetPlayerTargetPosition(player, state);
-                Debug.Log($"[TacticPositioner] Offensive player {player.GetPlayerId()} assigned role: {player.AssignedTacticalRole} target position: {targetPos}");
+                Debug.Log($"[TacticPositioner] Offensive player {player.GetPlayerId()} assigned role: {player.TacticalRole} target position: {targetPos}");
             }
         }
 
@@ -564,41 +564,114 @@ namespace HandballManager.Simulation.AI.Positioning // Updated from Engines to A
         }
 
 
-        /// <summary>Calculates the base defensive position based on role and tactical system.</summary>
-        /// <remarks>Now data-driven using FormationData.</remarks>
+        /// <summary>Calculates the base defensive position based on the assigned formation slot.</summary>
         private Vector2 GetDefensivePosition(SimPlayer player, Tactic tactic)
         {
-            if (player?.BaseData == null) return Vector2.zero;
+            if (player?.BaseData == null || tactic?.DefensiveFormationData == null)
+            {
+                Debug.LogError($"[TacticPositioner] GetDefensivePosition: Null player, BaseData, or DefensiveFormationData. PlayerID: {player?.GetPlayerId() ?? -1}");
+                return player?.Position ?? Vector2.zero; // Return current or zero
+            }
+
             var formation = tactic.DefensiveFormationData;
-            var slot = formation.Slots.FirstOrDefault(s => s.PositionRole == player.BaseData.PrimaryPosition);
+            FormationSlot slot = null;
+
+            // 1. Try finding the slot by assigned role name
+            if (!string.IsNullOrEmpty(player.AssignedFormationSlotRole))
+            {
+                // Assuming FormationData has a method like this:
+                slot = formation.GetSlotByRoleName(player.AssignedFormationSlotRole); // Use GetSlotByRoleName
+                if (slot == null)
+                {
+                    Debug.LogWarning($"[TacticPositioner] Defensive slot for role '{player.AssignedFormationSlotRole}' not found in formation '{formation.FormationName}'. PlayerID: {player.GetPlayerId()}. Falling back to PrimaryPosition.");
+                }
+            }
+            else
+            {
+                Debug.LogWarning($"[TacticPositioner] Player {player.GetPlayerId()} has no AssignedFormationSlotRole for defensive positioning. Falling back to PrimaryPosition.");
+            }
+
+            // 2. Fallback: Try finding *any* slot matching the player's primary position
             if (slot == null)
             {
-                Debug.LogWarning($"[TacticPositioner] No defensive slot for position {player.BaseData.PrimaryPosition} in formation {formation.Name}");
-                return Vector2.zero;
+                slot = formation.Slots.FirstOrDefault(s => s.AssociatedPosition == player.BaseData.PrimaryPosition); // Fallback lookup
+                if (slot == null)
+                {
+                     Debug.LogError($"[TacticPositioner] No defensive slot found for role '{player.AssignedFormationSlotRole ?? "NULL"}' OR fallback position {player.BaseData.PrimaryPosition} in formation '{formation.FormationName}'. PlayerID: {player.GetPlayerId()}. Returning current position.");
+                     return player.Position; // Critical fallback
+                }
+                 Debug.LogWarning($"[TacticPositioner] Using fallback defensive slot based on PrimaryPosition {player.BaseData.PrimaryPosition} for PlayerID: {player.GetPlayerId()}.");
             }
-            float relX = slot.RelativePosition.x;
-            float relY = slot.RelativePosition.y;
-            float x = (player.TeamSimId == 0) ? relX * _geometry.PitchLength : (1 - relX) * _geometry.PitchLength;
+
+            // 3. Calculate position based on the found slot
+            float relX = slot.BasePositionOffset.x; // Use BasePositionOffset
+            float relY = slot.BasePositionOffset.y; // Use BasePositionOffset
+
+            // Adjust X based on team side (Home team attacks right, Away attacks left in default view)
+            // Defensive position relative to OWN goal.
+            // Assuming relX=0 is center line, relX=1 is own goal line/wing furthest from center
+            float x = (player.TeamSimId == 0)
+                ? _geometry.PitchLength * 0.5f * relX // Home team defends left half (0 to PitchLength/2)
+                : _geometry.PitchLength - (_geometry.PitchLength * 0.5f * relX); // Away team defends right half (PitchLength to PitchLength/2)
+
+            // Adjust Y based on relative position (0 = bottom sideline, 0.5 = center, 1 = top sideline)
             float y = relY * _geometry.PitchWidth;
+
             return new Vector2(x, y);
         }
 
-        /// <summary>Calculates the base attacking position based on role.</summary>
-        /// <remarks>Now data-driven using FormationData.</remarks>
+        /// <summary>Calculates the base attacking position based on the assigned formation slot.</summary>
         private Vector2 GetAttackingPosition(SimPlayer player, Tactic tactic)
         {
-            if (player?.BaseData == null) return Vector2.zero;
+             if (player?.BaseData == null || tactic?.OffensiveFormationData == null)
+            {
+                Debug.LogError($"[TacticPositioner] GetAttackingPosition: Null player, BaseData, or OffensiveFormationData. PlayerID: {player?.GetPlayerId() ?? -1}");
+                return player?.Position ?? Vector2.zero; // Return current or zero
+            }
+
             var formation = tactic.OffensiveFormationData;
-            var slot = formation.Slots.FirstOrDefault(s => s.PositionRole == player.BaseData.PrimaryPosition);
+            FormationSlot slot = null;
+
+            // 1. Try finding the slot by assigned role name
+            if (!string.IsNullOrEmpty(player.AssignedFormationSlotRole))
+            {
+                slot = formation.GetSlotByRoleName(player.AssignedFormationSlotRole); // Use GetSlotByRoleName
+                if (slot == null)
+                {
+                    Debug.LogWarning($"[TacticPositioner] Offensive slot for role '{player.AssignedFormationSlotRole}' not found in formation '{formation.FormationName}'. PlayerID: {player.GetPlayerId()}. Falling back to PrimaryPosition.");
+                }
+            }
+             else
+            {
+                Debug.LogWarning($"[TacticPositioner] Player {player.GetPlayerId()} has no AssignedFormationSlotRole for offensive positioning. Falling back to PrimaryPosition.");
+            }
+
+            // 2. Fallback: Try finding *any* slot matching the player's primary position
             if (slot == null)
             {
-                Debug.LogWarning($"[TacticPositioner] No attacking slot for position {player.BaseData.PrimaryPosition} in formation {formation.Name}");
-                return Vector2.zero;
+                slot = formation.Slots.FirstOrDefault(s => s.AssociatedPosition == player.BaseData.PrimaryPosition); // Fallback lookup
+                if (slot == null)
+                {
+                     Debug.LogError($"[TacticPositioner] No offensive slot found for role '{player.AssignedFormationSlotRole ?? "NULL"}' OR fallback position {player.BaseData.PrimaryPosition} in formation '{formation.FormationName}'. PlayerID: {player.GetPlayerId()}. Returning current position.");
+                     return player.Position; // Critical fallback
+                }
+                Debug.LogWarning($"[TacticPositioner] Using fallback offensive slot based on PrimaryPosition {player.BaseData.PrimaryPosition} for PlayerID: {player.GetPlayerId()}.");
             }
-            float relX = slot.RelativePosition.x;
-            float relY = slot.RelativePosition.y;
-            float x = (player.TeamSimId == 0) ? relX * _geometry.PitchLength : (1 - relX) * _geometry.PitchLength;
+
+            // 3. Calculate position based on the found slot
+            float relX = slot.BasePositionOffset.x; // Use BasePositionOffset
+            float relY = slot.BasePositionOffset.y; // Use BasePositionOffset
+
+            // Adjust X based on team side (Home team attacks right, Away attacks left)
+            // Attacking position relative to OPPONENT goal.
+            // Assuming relX=0 is center line, relX=1 is opponent goal line/wing furthest from center
+            float x = (player.TeamSimId == 0)
+                ? _geometry.PitchLength * 0.5f + (_geometry.PitchLength * 0.5f * relX) // Home team attacks right half (PitchLength/2 to PitchLength)
+                : _geometry.PitchLength * 0.5f * (1.0f - relX); // Away team attacks left half (PitchLength/2 to 0)
+
+            // Adjust Y based on relative position (0 = bottom sideline, 0.5 = center, 1 = top sideline)
             float y = relY * _geometry.PitchWidth;
+
             return new Vector2(x, y);
         }
 

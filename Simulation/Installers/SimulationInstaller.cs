@@ -1,5 +1,6 @@
 using UnityEngine;
 using Zenject;
+using System;
 using HandballManager.Simulation.AI.Decision;
 using HandballManager.Simulation.Engines;
 using HandballManager.Data;
@@ -35,6 +36,25 @@ namespace HandballManager.Simulation.Installers
             Container.Bind<IMatchSimulatorFactory>().To<MatchSimulatorFactory>().AsSingle();
             Container.Bind<IMatchSimulationCoordinator>().To<MatchSimulationCoordinator>().AsSingle();
 
+            // Bind PassivePlayManager by getting it from the active simulator via the coordinator
+            // This assumes IMatchSimulationCoordinator provides access to the current IMatchSimulator instance
+            // and that instance is the concrete MatchSimulator type holding PassivePlayManager.
+            Container.Bind<PassivePlayManager>().FromMethod(ctx => {
+                var coordinator = ctx.Container.Resolve<IMatchSimulationCoordinator>();
+                // IMPORTANT: Assumes GetCurrentSimulator() or similar exists and returns the active MatchSimulator
+                // We might need to adjust this based on the actual IMatchSimulationCoordinator interface.
+                // For now, let's assume it returns the concrete type or can be cast.
+                var simulator = coordinator.CurrentSimulator; // Now using the interface property
+                if (simulator is MatchSimulator concreteSimulator)
+                {
+                    return concreteSimulator.PassivePlayManager;
+                }
+                Debug.LogError("[SimulationInstaller] Could not resolve PassivePlayManager. Active MatchSimulator not found or not of expected type in coordinator.");
+                // Return null or throw? Returning null might hide issues later.
+                // Throwing might be better during development.
+                throw new ZenjectException("Failed to resolve PassivePlayManager from MatchSimulationCoordinator.");
+            }).AsSingle(); // Assuming one PassivePlayManager per simulation coordinator lifecycle
+
             // AI services
             // Ensure evaluators are bound
             Container.Bind<ITacticalEvaluator>().To<TacticalEvaluator>().AsSingle();
@@ -53,7 +73,13 @@ namespace HandballManager.Simulation.Installers
                     ctx.Container.Resolve<IPersonalityEvaluator>(),
                     ctx.Container.Resolve<IGameStateEvaluator>()
                 )).AsSingle();
-            Container.Bind<IPlayerAIService>().To<CompositeAIService>().AsSingle();
+            // Bind the new role-specific AI controllers
+            Container.Bind<IOffensiveAIController>().To<OffensiveAIController>().AsSingle();
+            Container.Bind<IDefensiveAIController>().To<DefensiveAIController>().AsSingle();
+            Container.Bind<IGoalkeeperAIController>().To<GoalkeeperAIController>().AsSingle();
+            // Bind the main PlayerAIController, injecting the role-specific controllers
+            Container.Bind<IPlayerAIController>().To<PlayerAIController>().AsSingle();
+            // Container.Bind<IPlayerAIService>().To<CompositeAIService>().AsSingle(); // Keep or remove depending on CompositeAIService usage
 
             // Tactic provider (uses runtime values)
             Container.Bind<ITacticProvider>().FromMethod(_ => new DefaultTacticProvider(userTeam, userTactic, aiTactic)).AsSingle();
@@ -66,7 +92,30 @@ namespace HandballManager.Simulation.Installers
             Container.Bind<IBallPhysicsCalculator>().To<DefaultBallPhysicsCalculator>().AsSingle();
 
             // Movement simulator
-            Container.Bind<IMovementSimulator>().To<MovementSimulator>().AsSingle();
+            Container.Bind<IMovementSimulator>().To<MovementSimulator>().AsSingle().OnInstantiated((ctx, instance) => {
+                // Récupérer le MovementSimulator concret
+                if (instance is MovementSimulator movementSimulator)
+                {
+                    // Créer un delegate pour le PassivePlayManager
+                    // Cela sera appelé lorsqu'une intention d'attaque est détectée
+                    Action attackingIntentHandler = () => {
+                        // Obtenir le PassivePlayManager actuel via le MatchSimulator
+                        var coordinator = ctx.Container.Resolve<IMatchSimulationCoordinator>();
+                        if (coordinator.CurrentSimulator is MatchSimulator matchSimulator && 
+                            matchSimulator.PassivePlayManager != null)
+                        {
+                            matchSimulator.PassivePlayManager.NotifyAttackingIntent();
+                        }
+                    };
+                    
+                    // Réinstancier le PlayerPhysicsEngine avec le nouveau delegate
+                    // La méthode UpdatePlayerPhysicsEngine a été ajoutée à MovementSimulator
+                    movementSimulator.UpdatePlayerPhysicsEngine(attackingIntentHandler);
+                    
+                    // Alternativement, si MovementSimulator est déjà configuré pour utiliser le delegate,
+                    // nous n'avons pas besoin de faire quoi que ce soit ici
+                }
+            });
 
             // Phase manager
             Container.Bind<IPhaseManager>().To<DefaultPhaseManager>().AsSingle();

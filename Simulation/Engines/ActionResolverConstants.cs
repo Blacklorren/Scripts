@@ -175,9 +175,10 @@ namespace HandballManager.Simulation.Engines // Updated namespace to match new f
 
         // Assume MatchSimulator.PitchGeometry... constants are accessible or move values here
         public const float PITCH_LENGTH = 40f; // Example value
-                public const float PITCH_WIDTH = 20f;  // Example value
+        public const float PITCH_WIDTH = 20f;  // Example value
         public const float PITCH_CENTER_Y = PITCH_WIDTH / 2f;
         public const float FREE_THROW_LINE_RADIUS = 9f; // Example value
+        public const float GOAL_WIDTH = 3f; // Standard handball goal width (3 meters)
 
         /// <summary>
         /// Radius (in meters) within which defenders are considered for openness calculation.

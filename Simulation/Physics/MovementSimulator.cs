@@ -17,7 +17,7 @@ namespace HandballManager.Simulation.Physics
         private readonly IMatchEventHandler _eventHandler;
 
         // Modularized sub-components
-        private readonly PlayerPhysicsEngine _playerPhysicsEngine;
+        private PlayerPhysicsEngine _playerPhysicsEngine;
         private readonly StaminaManager _staminaManager;
         private readonly CollisionResolver _collisionResolver;
 
@@ -42,17 +42,41 @@ namespace HandballManager.Simulation.Physics
         }
         public MovementSimulator(IGeometryProvider geometry, IMatchEventHandler eventHandler, ITacticPositioner tacticPositioner,
             StaminaManager staminaManager,
-            CollisionResolver collisionResolver)
+            CollisionResolver collisionResolver,
+            Action attackingIntentHandler = null)
         {
-        
-
             _geometry = geometry ?? throw new ArgumentNullException(nameof(geometry));
             _eventHandler = eventHandler ?? throw new ArgumentNullException(nameof(eventHandler));
             _tacticPositioner = tacticPositioner ?? throw new ArgumentNullException(nameof(tacticPositioner));
-            _playerPhysicsEngine = new PlayerPhysicsEngine(TriggerTurnover);
-    // Update: if TriggerStepViolation is passed as a delegate elsewhere, ensure it now matches the new signature.
+            _playerPhysicsEngine = new PlayerPhysicsEngine(
+                TriggerTurnover,
+                _geometry,
+                _eventHandler,
+                _staminaManager,
+                _tacticPositioner,
+                attackingIntentHandler
+            );
             _staminaManager = staminaManager ?? throw new ArgumentNullException(nameof(staminaManager));
             _collisionResolver = new CollisionResolver(_geometry);
+        }
+        
+        /// <summary>
+        /// Met à jour le PlayerPhysicsEngine avec un nouveau delegate pour la détection d'intention d'attaque.
+        /// Cette méthode est utilisée par le système d'injection de dépendances pour connecter
+        /// le PlayerPhysicsEngine au PassivePlayManager après l'initialisation.
+        /// </summary>
+        /// <param name="attackingIntentHandler">Le delegate à appeler lorsqu'une intention d'attaque est détectée</param>
+        public void UpdatePlayerPhysicsEngine(Action attackingIntentHandler)
+        {
+            // Créer une nouvelle instance de PlayerPhysicsEngine avec le nouveau delegate
+            _playerPhysicsEngine = new PlayerPhysicsEngine(
+                TriggerTurnover,
+                _geometry,
+                _eventHandler,
+                _staminaManager,
+                _tacticPositioner,
+                attackingIntentHandler
+            );
         }
 
         
@@ -267,7 +291,9 @@ namespace HandballManager.Simulation.Physics
             }
 
             // Optionally, reset the player's step count or take other corrective action
-            player.ResetSteps();
+            var simPlayer = state.GetPlayerById(player.PlayerID);
+if (simPlayer != null)
+    simPlayer.ResetSteps(simPlayer.Position);
         }
         
         // Special situation positioning is now handled by TacticPositioner.
@@ -327,7 +353,7 @@ namespace HandballManager.Simulation.Physics
         // Only allowed if the player is in the air and the jump originated from outside the zone
         private bool IsAllowedZoneEntryContext(SimPlayer player, MatchState state, bool isAttacking, bool isDefending)
         {
-            return player.CurrentAction == PlayerAction.Jumping && player.JumpOriginatedOutsideGoalArea;
+            return player.CurrentAction == PlayerAction.JumpingForShot && player.JumpOriginatedOutsideGoalArea;
         }
 
         // Testable: Redirects player velocity tangentially around the goal area
@@ -339,7 +365,8 @@ namespace HandballManager.Simulation.Physics
             if (Vector2.Dot(tangent, player.Velocity) < 0)
                 tangent = -tangent;
             player.Velocity = tangent * player.Velocity.magnitude;
-            player.Velocity += fromGoal * player.Velocity.magnitude * 0.2f;
+            Vector3 addVec = new Vector3(fromGoal.x, 0, fromGoal.y) * player.Velocity.magnitude * 0.2f;
+player.Velocity += addVec;
         }
 
     }

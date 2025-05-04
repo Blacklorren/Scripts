@@ -28,14 +28,14 @@ namespace HandballManager.Simulation.Events.Handlers
             _jumpSimulator = jumpSimulator ?? throw new ArgumentNullException(nameof(jumpSimulator));
         }
 
-        // Team ID constants
-        private const int HOME_TEAM_ID = SimConstants.HOME_TEAM_ID;
-        private const int AWAY_TEAM_ID = SimConstants.AWAY_TEAM_ID;
+        // Team ID constants - Use Core.SimConstants
+        private const int HOME_TEAM_ID = Core.SimConstants.HOME_TEAM_ID;
+        private const int AWAY_TEAM_ID = Core.SimConstants.AWAY_TEAM_ID;
 
         // --- Constants ---
-        // Suspension times now reference SimConstants
-        private const float DEFAULT_SUSPENSION_TIME = SimConstants.DEFAULT_SUSPENSION_TIME;
-        private const float RED_CARD_SUSPENSION_TIME = SimConstants.RED_CARD_SUSPENSION_TIME;
+        // Suspension times now reference Core.SimConstants
+        private const float DEFAULT_SUSPENSION_TIME = Core.SimConstants.DEFAULT_SUSPENSION_TIME;
+        private const float RED_CARD_SUSPENSION_TIME = Core.SimConstants.RED_CARD_SUSPENSION_TIME;
         private const float LOOSE_BALL_MIN_REBOUND_SPEED = 1f;
         private const float LOOSE_BALL_MAX_REBOUND_SPEED = 3f;
         private const float BLOCK_REBOUND_MIN_SPEED_FACTOR = 0.2f;
@@ -257,12 +257,13 @@ namespace HandballManager.Simulation.Events.Handlers
                 // Calculate vertical velocity based on Jumping attribute
                 float jumpingValue = Mathf.Clamp(blocker.BaseData.Jumping, 0f, 100f);
                 float verticalVelocity = Mathf.Lerp(
-                    SimConstants.MIN_JUMP_VERTICAL_VELOCITY,
-                    SimConstants.MAX_JUMP_VERTICAL_VELOCITY,
+                    Core.SimConstants.MIN_JUMP_VERTICAL_VELOCITY,
+                    Core.SimConstants.MAX_JUMP_VERTICAL_VELOCITY,
                     jumpingValue / 100f
                 );
-                Vector2 jumpVelocity = new Vector2(0f, verticalVelocity); // Add horizontal if needed
-                _jumpSimulator.StartJump(blocker, jumpVelocity);
+                // StartJump method doesn't take parameters - it uses the player reference from the constructor
+                // and calculates velocity internally based on player attributes
+                _jumpSimulator.StartJump();
             }
 
             Log($"Shot by {shooter?.BaseData?.FullName ?? "Unknown"} blocked by {blocker.BaseData.FullName}!", blocker);
@@ -377,7 +378,8 @@ namespace HandballManager.Simulation.Events.Handlers
 
                  // Apply suspension state to player
                  committer.SuspensionTimer = (severity == FoulSeverity.RedCard) ? RED_CARD_SUSPENSION_TIME : DEFAULT_SUSPENSION_TIME; // Use constants
-                 committer.CurrentAction = PlayerAction.Suspended;
+
+                 committer.CurrentAction = PlayerAction.Idle;
                  committer.IsOnCourt = false; // Remove from court visually/logically
                  // Remove player from the correct on-court list
                  var teamList = state.GetTeamOnCourt(committer.TeamSimId);
@@ -414,7 +416,7 @@ namespace HandballManager.Simulation.Events.Handlers
              {
                  IncrementStat(state, victimTeamId, stats => stats.PenaltiesAwarded++); // Award penalty stat
                  GamePhase nextPhase = (victimTeamId == HOME_TEAM_ID) ? GamePhase.HomePenalty : GamePhase.AwayPenalty;
-                 Log($"7m Penalty awarded to Team {victimTeamId}.", teamId: GetTeamIdFromSimId(state, victimTeamId));
+                 Log($"7m Penalty awarded to Team {victimTeamId}.", teamId: victimTeamId);
                  TransitionToPhase(state, nextPhase); // Set penalty phase (triggers setup)
              } else {
                  // Free Throw: Adjust position if inside 9m line
@@ -427,7 +429,7 @@ namespace HandballManager.Simulation.Events.Handlers
                  } // Else: ball position remains at foulLocation
 
                  GamePhase nextPhase = (victimTeamId == HOME_TEAM_ID) ? GamePhase.HomeSetPiece : GamePhase.AwaySetPiece;
-                 Log($"Free throw awarded to Team {victimTeamId}.", teamId: GetTeamIdFromSimId(state, victimTeamId));
+                 Log($"Free throw awarded to Team {victimTeamId}.", teamId: victimTeamId);
                  TransitionToPhase(state, nextPhase); // Set set piece phase (triggers setup)
              }
 
@@ -453,7 +455,7 @@ namespace HandballManager.Simulation.Events.Handlers
              RestartInfo restart = DetermineRestartTypeAndPosition(state, restartPosition3D, lastTouchTeamId, receivingTeamId);
              receivingTeamId = restart.ReceivingTeamId;
 
-             Log($"Ball out of bounds ({restart.Type}). Possession to Team {receivingTeamId}.", teamId: GetTeamIdFromSimId(state, receivingTeamId));
+             Log($"Ball out of bounds ({restart.Type}). Possession to Team {receivingTeamId}.", teamId: receivingTeamId);
 
              // State Updates
              HandlePossessionChange(state, receivingTeamId);
@@ -495,11 +497,11 @@ namespace HandballManager.Simulation.Events.Handlers
 
             if (wentOutHomeGoalLine) { // Out over Home end line (X=0)
                 if (lastTouchTeamId == 1) { // Away attacker touched last -> Goal Throw for Home
-                    isGoalThrow = true; restartType = "Goal throw"; finalReceivingTeamId = SimConstants.HOME_TEAM_ID;
+                    isGoalThrow = true; restartType = "Goal throw"; finalReceivingTeamId = Core.SimConstants.HOME_TEAM_ID;
                 } // else if (lastTouchTeamId == 0) { /* Corner Throw logic - not implemented */ }
             } else if (wentOutAwayGoalLine) { // Out over Away end line (X=Length)
                  if (lastTouchTeamId == 0) { // Home attacker touched last -> Goal Throw for Away
-                     isGoalThrow = true; restartType = "Goal throw"; finalReceivingTeamId = SimConstants.AWAY_TEAM_ID;
+                     isGoalThrow = true; restartType = "Goal throw"; finalReceivingTeamId = Core.SimConstants.AWAY_TEAM_ID;
                  } // else if (lastTouchTeamId == 1) { /* Corner Throw logic - not implemented */ }
             }
 
@@ -513,21 +515,21 @@ namespace HandballManager.Simulation.Events.Handlers
                 Vector3 dir3D;
                 if(gk != null) {
                     // Convert 2D player position to 3D direction vector
-                    Vector3 gkPos3D = new(gk.Position.x, SimConstants.BALL_DEFAULT_HEIGHT, gk.Position.y);
+                    Vector3 gkPos3D = new(gk.Position.x, Core.SimConstants.BALL_DEFAULT_HEIGHT, gk.Position.y);
                     dir3D = new(gkPos3D.x - goalCenter.x, 0f, gkPos3D.z - goalCenter.z);
                     
                     // Check if direction is near zero
-                    if(dir3D.sqrMagnitude < SimConstants.VELOCITY_NEAR_ZERO_SQ) {
-                        dir3D = new Vector3((finalReceivingTeamId == HOME_TEAM_ID ? 1f : -1f), 0f, 0f); // Default X direction
+                    if(dir3D.sqrMagnitude < Core.SimConstants.VELOCITY_NEAR_ZERO_SQ) {
+                        dir3D = new Vector3((finalReceivingTeamId == Core.SimConstants.HOME_TEAM_ID ? 1f : -1f), 0f, 0f); // Default X direction
                     }
                 } else {
-                    dir3D = new Vector3((finalReceivingTeamId == HOME_TEAM_ID ? 1f : -1f), 0f, 0f); // Default X direction
+                    dir3D = new Vector3((finalReceivingTeamId == Core.SimConstants.HOME_TEAM_ID ? 1f : -1f), 0f, 0f); // Default X direction
                 }
                 
                 // Set restart position in 3D
                 restartPos3D = goalCenter + dir3D.normalized * GOAL_THROW_RESTART_DIST;
                 // Ensure proper ball height
-                restartPos3D.y = SimConstants.BALL_DEFAULT_HEIGHT;
+                restartPos3D.y = Core.SimConstants.BALL_DEFAULT_HEIGHT;
             } else { // Sideline throw-in (or corner placeholder)
                  // Clamp Z position (3D equivalent of 2D Y) to stay within bounds
                  restartPos3D.z = Mathf.Clamp(restartPos3D.z, OOB_RESTART_BUFFER, _geometry.PitchWidth - OOB_RESTART_BUFFER);
@@ -543,14 +545,14 @@ namespace HandballManager.Simulation.Events.Handlers
                  }
                  
                  // Ensure proper ball height for throw-in
-                 restartPos3D.y = SimConstants.BALL_DEFAULT_HEIGHT;
+                 restartPos3D.y = Core.SimConstants.BALL_DEFAULT_HEIGHT;
             }
             
             // Final clamp just in case (X and Z only, preserve Y height)
             restartPos3D.x = Mathf.Clamp(restartPos3D.x, 0f, _geometry.PitchLength);
             restartPos3D.z = Mathf.Clamp(restartPos3D.z, 0f, _geometry.PitchWidth);
             // Ensure proper ball height is maintained
-            restartPos3D.y = SimConstants.BALL_DEFAULT_HEIGHT;
+            restartPos3D.y = Core.SimConstants.BALL_DEFAULT_HEIGHT;
 
             return new RestartInfo { Type = restartType, Position = restartPos3D, IsGoalThrow = isGoalThrow, ReceivingTeamId = finalReceivingTeamId };
         }
@@ -595,15 +597,15 @@ namespace HandballManager.Simulation.Events.Handlers
             if (ballIsLoose || newPossessionTeamId == -1) {
                 // If ball becomes loose, always transition to ContestedBall
                  nextPhase = GamePhase.ContestedBall;
-                Log("Possession contested (Loose Ball).", (SimPlayer)null);
+                 Log("Possession contested (Loose Ball).", (SimPlayer)null);
             } else if (possessionTrulyChanged) {
                  // If possession changed between teams (and ball not loose), start transition
                  nextPhase = (newPossessionTeamId == 0) ? GamePhase.TransitionToHomeAttack : GamePhase.TransitionToAwayAttack;
-                 Log($"Possession changes to Team {newPossessionTeamId}.", (SimPlayer)null, GetTeamIdFromSimId(state, newPossessionTeamId));
+                 Log($"Possession changes to Team {newPossessionTeamId}.", (SimPlayer)null, newPossessionTeamId);
             } else if (newPossessionTeamId != -1 && previousPossessionTeamId == -1) {
                  // Gained possession from a contested state
                  nextPhase = (newPossessionTeamId == 0) ? GamePhase.HomeAttack : GamePhase.AwayAttack;
-                 Log($"Team {newPossessionTeamId} gained possession.", (SimPlayer)null, GetTeamIdFromSimId(state, newPossessionTeamId));
+                 Log($"Team {newPossessionTeamId} gained possession.", (SimPlayer)null, newPossessionTeamId);
             }
             // Else: Possession stays with the same team (e.g., after own throw-in), maintain current Attack phase
 

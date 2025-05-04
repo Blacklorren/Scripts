@@ -38,8 +38,17 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         {
             Holder = player;
         }
-        /// <summary>True if the ball is not held and not actively in flight (e.g., rolling, stationary).</summary>
-        public bool IsLoose => Holder == null && !IsInFlight && !IsRolling;
+        /// <summary>
+        /// True if the ball is not held and not actively in flight (e.g., rolling, stationary),
+        /// or if a designer-driven loose ball flag is set (for advanced gameplay scenarios).
+        /// </summary>
+        public bool IsLoose => (Holder == null && !IsInFlight && !IsRolling) || IsLooseBallSituation;
+
+        /// <summary>
+        /// Designer-driven loose ball flag. Set this to true in event logic (e.g., after a block, missed pass, or save) to mark the ball as "loose" for AI purposes.
+        /// Must be reset to false when a player gains possession or the situation stabilizes.
+        /// </summary>
+        public bool IsLooseBallSituation { get; set; } = false;
         /// <summary>True if the ball was passed or shot and is currently moving through the air.</summary>
         public bool IsInFlight { get; private set; } = false;
         /// <summary>True if the ball is on the ground and rolling.</summary>
@@ -115,8 +124,9 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
                     OnPassCompletedBetweenTeammates?.Invoke(player.TeamSimId);
                 }
                 Holder = player;
-                IsInFlight = false;
-                IsRolling = false;
+                player.HasBall = true; // Set the new holder's status
+                IsInFlight = false; // Gaining possession stops flight
+                IsRolling = false; // Gaining possession stops rolling
                 ResetPassContext();
                 LastShooter = null; // Reset shooter on possession change
                 Velocity = Vector3.zero; // Stop ball movement
@@ -124,7 +134,6 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
 
                 LastTouchedByTeamId = player.TeamSimId; // Assumes player.TeamSimId is valid
                 LastTouchedByPlayer = player;
-                player.HasBall = true; // Update player's state
 
                 // Position ball slightly offset from the player
                 Vector2 offsetDir2D = Vector2.right * (player.TeamSimId == 0 ? 1f : -1f); // Default direction
@@ -319,302 +328,15 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
         }
     }
 
-    // --- Player Simulation State ---
+    // SimPlayer class definition removed - moved to Simulation/SimPlayer.cs
+    // public class SimPlayer
+    // {
+    //     ...
+    // }
+
     /// <summary>
-    /// Represents the dynamic state of a player within the simulation.
-    /// Links to the base PlayerData and includes current position, action, stamina, etc.
+    /// Represents the outcome of a resolved player action or simulation event.
     /// </summary>
-    public class SimPlayer
-    {
-        /// <summary>
-        /// Indicates whether the player has recently received a pass.
-        /// This is set to true when a pass is successfully received and should be reset appropriately by event logic.
-        /// </summary>
-        public bool ReceivedPassRecently { get; set; } = false;
-
-        /// <summary>
-        /// Number of yellow cards received by the player in the current match.
-        /// </summary>
-        public int YellowCardCount { get; set; } = 0;
-        /// <summary>
-        /// Number of 2-minute suspensions received by the player in the current match.
-        /// </summary>
-        public int TwoMinuteSuspensionCount { get; set; } = 0;
-        // --- Jump Recovery State ---
-        private bool isRecoveringFromJump = false;
-        private float jumpRecoveryTimer = 0f;
-        /// <summary>
-        /// True if the player is currently recovering from a jump landing.
-        /// </summary>
-        public bool IsRecoveringFromJump => isRecoveringFromJump;
-        /// <summary>
-        /// Remaining recovery time (seconds).
-        /// </summary>
-        public float JumpRecoveryTimer => jumpRecoveryTimer;
-        /// <summary>
-        /// Call to start the jump recovery state with a given duration.
-        /// </summary>
-        internal void StartJumpRecovery(float duration)
-        {
-            isRecoveringFromJump = true;
-            jumpRecoveryTimer = duration;
-        }
-        /// <summary>
-        /// Updates the jump recovery timer and clears recovery state when finished.
-        /// </summary>
-        internal void UpdateJumpRecovery(float deltaTime)
-        {
-            if (isRecoveringFromJump)
-            {
-                jumpRecoveryTimer -= deltaTime;
-                if (jumpRecoveryTimer <= 0f)
-                {
-                    isRecoveringFromJump = false;
-                }
-            }
-        }
-        /// <summary>
-        /// The player's current vertical (Y) position above the ground. 0 = on ground.
-        /// </summary>
-        /// <summary>
-        /// The player's current vertical (Y) position above the ground. 0 = on ground.
-        /// </summary>
-        public float VerticalPosition { get; set; } = 0f;
-
-        /// <summary>
-        /// The player's initial jump velocity (2D: x for horizontal, y for vertical component).
-        /// </summary>
-        public Vector2 JumpStartVelocity { get; set; }
-
-        /// <summary>
-        /// The time elapsed since jump started.
-        /// </summary>
-        public float JumpTimer { get; set; } = 0f;
-
-        /// <summary>
-        /// True if the player is currently in a jump.
-        /// </summary>
-        public bool JumpActive { get; set; } = false;
-
-        /// <summary>
-        /// The starting vertical height at the beginning of the jump.
-        /// </summary>
-        public float JumpInitialHeight { get; set; } = 0f;
-
-        /// <summary>
-        /// True if the player is currently jumping.
-        /// </summary>
-        public bool IsJumping { get; set; } = false;
-        /// <summary>
-        /// The direction the player is currently facing on the field (normalized 2D vector).
-        /// By default, players look to the right (Vector2.right).
-        /// Update this during simulation to reflect realistic player attention (e.g., towards the ball or direct opponent).
-        /// </summary>
-        public UnityEngine.Vector2 LookDirection { get; set; } = UnityEngine.Vector2.right;
-        /// <summary>
-        /// True if the player is currently jumping (for block, shot, etc.).
-        /// </summary>
-        
-        // --- Jump Simulation Fields ---
-        private float jumpDuration = 0f;
-        private float jumpHeight = 0f;
-        private bool jumpActive = false;
-
-        /// <summary>
-        /// Marks the player as starting a jump. Actual jump physics handled by JumpSimulator.
-        /// </summary>
-        public void StartJump()
-        {
-            JumpTimer = 0f;
-            JumpActive = true;
-            IsJumping = true;
-        }
-
-        /// <summary>
-        /// No longer handles jump arc; handled by JumpSimulator. Only updates state if needed.
-        /// </summary>
-        public void UpdateJump(float deltaTime)
-        {
-            // Placeholder for legacy calls. JumpSimulator handles jump arc and landing.
-        }
-    
-        /// <summary>
-        /// Updates the player's stamina based on movement intensity and ball possession.
-        /// </summary>
-        /// <param name="deltaTime">Time in seconds since last update.</param>
-        /// <param name="isHoldingBall">Whether the player is holding the ball (optional).</param>
-        public void UpdateStamina(float deltaTime, bool isHoldingBall = false)
-        {
-            // Estimate movement intensity as a fraction of max speed
-            float movementIntensity = Velocity.magnitude / (EffectiveSpeed > 0f ? EffectiveSpeed : 1f);
-            // Base drain rate (tweakable constant)
-            float baseDrainRate = 0.07f; // Example: 0.07 stamina drained per second at max intensity
-            float possessionMultiplier = isHoldingBall ? 1.25f : 1.0f; // More drain when holding ball
-
-            // Drain stamina from movement and possession
-            float staminaDelta = movementIntensity * baseDrainRate * possessionMultiplier * deltaTime;
-            Stamina -= staminaDelta;
-
-            // Allow some recovery if player is nearly idle
-            if (movementIntensity < 0.1f && !isHoldingBall)
-            {
-                float recoveryRate = 0.05f; // Example: recover 0.05 per second when idle
-                Stamina += recoveryRate * deltaTime;
-            }
-
-            // Clamp to [0,1]
-            Stamina = Mathf.Clamp01(Stamina);
-
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"[Stamina] Player {BaseData?.FullName} updated stamina: {Stamina:F2} (delta: {-staminaDelta:F3})");
-            #endif
-        }
-    
-        /// <summary>
-        /// Current stamina level (1 = fully rested, 0 = épuisé).
-        /// Stamina affects pass/interception accuracy et est mise à jour à chaque étape de simulation.
-        /// </summary>
-        public float Stamina { get; set; } = 1f;
-
-        // --- Static Info (Reference) ---
-        /// <summary>Reference to the persistent player data (attributes, contract info etc.).</summary>
-        public PlayerData BaseData { get; private set; }
-        /// <summary>Simulation Team ID (0 = Home, 1 = Away).</summary>
-        public int TeamSimId { get; private set; }
-        /// <summary>
-        /// The tactical role/slot currently assigned to the player by the tactic.
-        /// </summary>
-        public PlayerPosition AssignedTacticalRole { get; set; }
-
-        // --- Dynamic State ---
-        /// <summary>
-        /// True if the AI intends for this player to dribble (intent, not current action).
-        /// Should be set by AI logic before action execution.
-        /// </summary>
-        public bool WantsToDribble { get; set; } = false;
-        /// <summary>Current 2D position on the pitch.</summary>
-        public Vector2 Position { get; internal set; } // Encapsulated
-        /// <summary>Current 2D velocity.</summary>
-        public Vector2 Velocity { get; internal set; } // Encapsulated
-        /// <summary>True if this player is currently holding the ball.</summary>
-        public bool HasBall { get; set; } = false; // Allow external set by SimBall
-
-        /// <summary>True if the player is currently considered active on the court.</summary>
-        public bool IsOnCourt { get; set; } = false;
-        /// <summary>Seconds remaining if player is serving a suspension.</summary>
-        public float SuspensionTimer { get; set; } = 0f;
-
-
-
-        // --- Stumbling Mechanics ---
-        private bool isStumbling = false;
-        private float stumbleTimer = 0f;
-        public bool IsStumbling => isStumbling;
-        public float StumbleTimer => stumbleTimer;
-        internal void StartStumble(float duration)
-        {
-            isStumbling = true;
-            stumbleTimer = duration;
-        }
-        internal void UpdateStumble(float deltaTime)
-        {
-            if (isStumbling)
-            {
-                stumbleTimer -= deltaTime;
-                if (stumbleTimer <= 0f) isStumbling = false;
-            }
-        }
-
-        /// <summary>The player's current primary action/intent.</summary>
-        public PlayerAction CurrentAction { get; set; } = PlayerAction.Idle;
-        /// <summary>
-        /// The next action the AI intends for this player, set before execution.
-        /// Used for planning and intent tracking.
-        /// </summary>
-        public PlayerAction PlannedAction { get; set; } = PlayerAction.Idle;
-        /// <summary>The target position the player is trying to reach.</summary>
-        public Vector2 TargetPosition { get; set; }
-        /// <summary>Reference to another player targeted by the current action (pass, tackle, mark).</summary>
-        public SimPlayer TargetPlayer { get; set; } = null;
-        /// <summary>Countdown timer for actions requiring preparation (pass/shot windup, tackle attempt).</summary>
-        public float ActionTimer { get; set; } = 0f;
-
-        /// <summary>
-        /// The position where the current jump started. Null if not currently jumping.
-        /// </summary>
-        public Vector2? JumpOrigin { get; set; } = null;
-
-        /// <summary>
-        /// True if the current jump originated outside the goal area (to be set by simulation logic).
-        /// </summary>
-        public bool JumpOriginatedOutsideGoalArea { get; set; } = false;
-
-        /// <summary>Calculated maximum speed based on base attributes and current stamina.</summary>
-        public float EffectiveSpeed { get; internal set; } = 0f;
-
-        /// <summary>
-        /// Initializes a new SimPlayer instance.
-        /// </summary>
-        /// <param name="baseData">The persistent PlayerData for this player.</param>
-        /// <param name="teamSimId">The simulation team ID (0 or 1).</param>
-        /// <exception cref="ArgumentNullException">Thrown if baseData is null.</exception>
-        public SimPlayer(PlayerData baseData, int teamSimId)
-        {
-            BaseData = baseData ?? throw new ArgumentNullException(nameof(baseData), "SimPlayer cannot be created with null PlayerData.");
-            if (teamSimId != 0 && teamSimId != 1) {
-                Debug.LogWarning($"[SimPlayer] Invalid TeamSimId ({teamSimId}) provided for player {baseData.FullName}. Defaulting to 0 (Home).");
-                teamSimId = 0;
-            }
-
-            TeamSimId = teamSimId;
-            Position = Vector2.zero; // Initial position set later by setup logic
-            Velocity = Vector2.zero;
-            TargetPosition = Position;
-            Stamina = 1.0f;
-            JumpOrigin = null;
-            JumpOriginatedOutsideGoalArea = false;
-        }
-        /// <summary>
-        /// Updates the player's effective maximum speed based on their base speed attribute and current stamina level.
-        /// </summary>
-        public void UpdateEffectiveSpeed()
-        {
-             // Use default/benchmark values if BaseData is somehow null
-             float baseSpeedAttr = BaseData?.Speed ?? SimConstants.PLAYER_DEFAULT_ATTRIBUTE_VALUE;
-             float maxSpeedPossible = (baseSpeedAttr / 100f) * SimConstants.PLAYER_DEFAULT_MAX_SPEED;
-
-             float staminaFactor = 1.0f;
-             if (Stamina < SimConstants.PLAYER_STAMINA_LOW_THRESHOLD) {
-                 staminaFactor = Mathf.Lerp(SimConstants.PLAYER_STAMINA_MIN_SPEED_FACTOR, 1.0f, Stamina / SimConstants.PLAYER_STAMINA_LOW_THRESHOLD);
-             }
-             EffectiveSpeed = maxSpeedPossible * staminaFactor;
-
-             // Reduce speed if dribbling
-             if (CurrentAction == PlayerAction.Dribbling)
-             {
-                 EffectiveSpeed *= 0.75f; // Dribbling speed penalty (can be attribute-driven)
-             }
-        }
-
-        // --- Safe Accessors for BaseData Properties ---
-        /// <summary>Safely gets the player's persistent Team ID.</summary>
-        public int GetTeamId() => BaseData?.CurrentTeamID ?? -1;
-        /// <summary>Safely gets the player's persistent Player ID.</summary>
-        public int GetPlayerId() => BaseData?.PlayerID ?? -1;
-
-        /// <summary>
-        /// Returns true if the player is currently suspended (serving a suspension).
-        /// </summary>
-        public bool IsSuspended() => SuspensionTimer > 0f;
-
-        /// <summary>
-        /// Returns true if the player is a goalkeeper based on their primary position.
-        /// </summary>
-        public bool IsGoalkeeper() => BaseData?.PrimaryPosition == PlayerPosition.Goalkeeper;
-    }
-
-    // --- Action Result Structure (Refined) ---
-    /// <summary>Represents the outcome of a resolved player action or simulation event.</summary>
     public struct ActionResult
     {
         public ActionResultOutcome Outcome;
@@ -637,9 +359,6 @@ namespace HandballManager.Simulation.Engines // Updated to match new folder stru
 
     /// <summary>Severity levels for fouls.</summary>
      public enum FoulSeverity { None, FreeThrow, PenaltyThrow, TwoMinuteSuspension, RedCard, OffensiveFoul }
-
-    /// <summary>Possible primary actions a player can be performing.</summary>
-    public enum PlayerAction { Idle, MovingToPosition, MovingWithBall, PreparingPass, ReceivingPass, PreparingShot, AttemptingTackle, AttemptingBlock, AttemptingIntercept, MarkingPlayer, ChasingBall, GoalkeeperPositioning, GoalkeeperSaving, Suspended, Fallen, GettingUp, Dribbling, Jumping, SettingScreen, UsingScreen, ShieldingBall }
 
     /// <summary>Represents a logged event during the match simulation.</summary>
     public struct MatchEvent

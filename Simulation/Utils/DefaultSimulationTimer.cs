@@ -18,6 +18,53 @@ namespace HandballManager.Simulation.Utils // Changed from Services to Utils
             // This logic belongs *outside* the timer service, in the main loop's check
             // if (state.CurrentPhase == GamePhase.Timeout) { ... return; } -> This check is in MatchSimulator loop
 
+            // --- Team Penalty Timers (Red Card Replacement) ---
+            for (int teamSimId = 0; teamSimId < state.TeamPenaltyTimer.Length; teamSimId++)
+            {
+                if (state.TeamPenaltyTimer[teamSimId] > 0f)
+                {
+                    state.TeamPenaltyTimer[teamSimId] -= deltaTime;
+                    if (state.TeamPenaltyTimer[teamSimId] <= 0f)
+                    {
+                        state.TeamPenaltyTimer[teamSimId] = 0f;
+
+                        List<SimPlayer> teamOnCourt = state.GetTeamOnCourt(teamSimId);
+                        List<SimPlayer> teamBench = (teamSimId == 0) ? state.HomeBench : state.AwayBench;
+
+                        if (teamOnCourt != null && teamBench != null && teamOnCourt.Count < 7 && teamBench.Count > 0)
+                        {
+                            // Team is shorthanded and has bench players available
+                            SimPlayer replacementPlayer = teamBench.FirstOrDefault(p => p != null && !p.IsOnCourt); // Find first available player on bench
+
+                            if (replacementPlayer != null)
+                            {
+                                // Add replacement to court
+                                teamOnCourt.Add(replacementPlayer);
+                                replacementPlayer.IsOnCourt = true;
+                                replacementPlayer.Position = replacementPlayer.TeamSimId == 0 ? new Vector2(2f, 1f) : new Vector2(38f, 1f); // Near bench
+                                replacementPlayer.TargetPosition = replacementPlayer.Position;
+                                replacementPlayer.CurrentAction = PlayerAction.Idle; // Reset action
+
+                                // Remove from bench
+                                teamBench.Remove(replacementPlayer);
+
+                                eventHandler?.LogEvent(state, $"Team {teamSimId} replaces red-carded player with {replacementPlayer.BaseData?.FullName ?? "Unknown"} from bench.",
+                                                      teamSimId, replacementPlayer.GetPlayerId());
+                            }
+                            else
+                            {
+                                eventHandler?.LogEvent(state, $"Team {teamSimId} penalty expired, but no suitable replacement player found on bench.", teamSimId);
+                            }
+                        }
+                        else
+                        {
+                            // Penalty expired, but team is full or no bench players
+                            eventHandler?.LogEvent(state, $"Team {teamSimId} penalty expired, but team is already full or no players on bench.", teamSimId);
+                        }
+                    }
+                }
+            }
+
             // --- Player Timers (Suspension, Action Prep) ---
             // We need to iterate over a copy of the players collection because the re-entry logic
             // modifies team court lists (adding/removing players) which could affect iteration safety.

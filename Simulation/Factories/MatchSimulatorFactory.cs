@@ -87,6 +87,9 @@ namespace HandballManager.Simulation.Factories
             
             _logger.LogInformation($"Creating new MatchSimulator instance for {matchState.HomeTeamData?.Name ?? "Unknown"} vs {matchState.AwayTeamData?.Name ?? "Unknown"} with seed: {matchState.RandomSeed}");
             
+            // Assign initial roles based on the populated player lists and tactics in the state
+            matchState.InitializePlayerRoles();
+
             // Create and return a new MatchSimulator with all dependencies injected
             var simulator = new MatchSimulator(
                 matchState,

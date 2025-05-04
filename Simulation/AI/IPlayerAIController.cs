@@ -24,15 +24,7 @@ namespace HandballManager.Simulation.AI
         /// <param name="state">The current match state.</param>
         /// <param name="player">The player to make a decision for.</param>
         /// <returns>The action the player should take.</returns>
-        PlayerAction DeterminePlayerAction(MatchState state, PlayerData player);
-
-        /// <summary>
-        /// Calculates the optimal position for a player based on tactical considerations.
-        /// </summary>
-        /// <param name="state">The current match state.</param>
-        /// <param name="player">The player to calculate position for.</param>
-        /// <returns>The target position vector for the player.</returns>
-        Vector2 CalculatePlayerPosition(MatchState state, PlayerData player);
+        PlayerAction DeterminePlayerAction(MatchState state, SimPlayer player);
 
         /// <summary>
         /// Evaluates potential passing targets and selects the best receiver.
@@ -40,6 +32,6 @@ namespace HandballManager.Simulation.AI
         /// <param name="state">The current match state.</param>
         /// <param name="passer">The player attempting to pass.</param>
         /// <returns>The best player to receive the pass, or null if no good option exists.</returns>
-        PlayerData FindBestPassTarget(MatchState state, PlayerData passer);
+        SimPlayer FindBestPassTarget(MatchState state, SimPlayer passer);
     }
 }

@@ -1,8 +1,10 @@
 using HandballManager.Gameplay;
 using HandballManager.Simulation.Engines;
 using HandballManager.Simulation.AI.Evaluation;
+using HandballManager.Simulation.AI.Positioning;
 using UnityEngine;
 using HandballManager.Core;
+using HandballManager.Simulation.Utils;
 
 namespace HandballManager.Simulation.AI.Decision
 {
@@ -14,32 +16,18 @@ namespace HandballManager.Simulation.AI.Decision
         private readonly ITacticalEvaluator _tacticalEvaluator;
         private readonly IPersonalityEvaluator _personalityEvaluator;
         private readonly IGameStateEvaluator _gameStateEvaluator;
+        private readonly IGoalkeeperPositioner _gkPositioner;
 
         public DefaultDefensiveDecisionMaker(
             ITacticalEvaluator tacticalEvaluator = null,
             IPersonalityEvaluator personalityEvaluator = null,
-            IGameStateEvaluator gameStateEvaluator = null)
+            IGameStateEvaluator gameStateEvaluator = null,
+            IGoalkeeperPositioner gkPositioner = null)
         {
             _tacticalEvaluator = tacticalEvaluator;
             _personalityEvaluator = personalityEvaluator;
             _gameStateEvaluator = gameStateEvaluator;
-        }
-        /// <summary>
-        /// Makes a tackle decision based on player context
-        /// </summary>
-        public DecisionResult MakeTackleDecision(PlayerAIContext context)
-        {
-            // Integrate evaluators and role
-            var player = context?.Player;
-            float aggression = player?.BaseData?.Aggression ?? 50f;
-            float bravery = player?.BaseData?.Bravery ?? 50f;
-            float determination = player?.BaseData?.Determination ?? 50f;
-            float concentration = player?.BaseData?.Concentration ?? 50f;
-            float riskMod = _personalityEvaluator?.GetRiskModifier(player?.BaseData) ?? 1.0f;
-            float tacticAggression = _tacticalEvaluator?.GetRiskModifier(context?.Tactics) ?? 1.0f;
-            float gameAggression = _gameStateEvaluator?.GetAttackRiskModifier(context?.MatchState, player?.TeamSimId ?? 0) ?? 1.0f;
-            float tackleConfidence = Mathf.Lerp(0.7f, 1.2f, (aggression + bravery + determination + concentration) / 400f) * riskMod * tacticAggression * gameAggression;
-            return new DecisionResult { IsSuccessful = true, Confidence = 0.75f * tackleConfidence };
+            _gkPositioner = gkPositioner;
         }
 
         /// <summary>
@@ -60,6 +48,19 @@ namespace HandballManager.Simulation.AI.Decision
                 return action;
             }
 
+            // --- Goalkeeper Specific Logic --- 
+            if (player.BaseData?.PrimaryPosition == PlayerPosition.Goalkeeper)
+            {
+                // TODO: Implement more sophisticated GK logic (e.g., anticipate shots, adjust angle)
+                Vector2 idealPos = _gkPositioner != null ? _gkPositioner.GetGoalkeeperDefensivePosition(player, state) : player.Position;
+
+                action.Action = PlayerAction.MovingToPosition; // Or a specific GK action if available
+                action.TargetPosition = idealPos;
+                // Debug.Log($"[DefensiveAI-GK] {player.PlayerName} moving to {idealPos}");
+                return action;
+            }
+            // --- End Goalkeeper Logic ---
+
             var ball = state.Ball;
             var opponents = state.GetOpposingTeamOnCourt(player.TeamSimId);
             if (opponents == null || opponents.Count == 0) {
@@ -72,7 +73,7 @@ namespace HandballManager.Simulation.AI.Decision
 
             // --- Defensive system awareness ---
             var formation = tactic?.DefensiveFormationData;
-            string system = (formation?.Name ?? "").Trim().ToUpperInvariant();
+            string system = (formation?.FormationName ?? "").Trim().ToUpperInvariant();
             // DefensiveFormationData peut maintenant être utilisé pour une logique avancée basée sur la structure de la formation
 
             // Helper function: find closest threat near a reference position
@@ -107,7 +108,7 @@ namespace HandballManager.Simulation.AI.Decision
                 SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
                 if (threat != null)
                 {
-                    action.Action = PlayerAction.MarkingPlayer;
+                    action.Action = PlayerAction.DefendingPlayer;
                     action.TargetPlayer = threat;
                     action.TargetPosition = threat.Position;
                     // Only attempt tackle if opponent tries to break through line
@@ -117,7 +118,7 @@ namespace HandballManager.Simulation.AI.Decision
                         float agg = player.BaseData?.Aggression ?? 50f;
                         if (agg > 65f)
                         {
-                            action.Action = PlayerAction.AttemptingTackle;
+                            action.Action = PlayerAction.Tackling;
                         }
                     }
                     return action;
@@ -130,15 +131,15 @@ namespace HandballManager.Simulation.AI.Decision
                 if (!isPoint && tactic?.DefensiveFormationData != null)
                 {
                     // Try to match slot name for point (if formation data supports it)
-                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.PositionRole.ToString().ToLower().Contains("point"));
-                    if (slot != null && slot.PositionRole == player.AssignedTacticalRole) isPoint = true;
+                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.AssociatedPosition.ToString().ToLower().Contains("point"));
+                    if (slot != null && slot.AssociatedPosition == player.AssignedTacticalRole) isPoint = true;
                 }
                 if (isPoint)
                 {
                     // Point defender: position higher, aggressive on ball carrier, attempt interceptions
                     if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 9.0f)
                     {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -147,7 +148,7 @@ namespace HandballManager.Simulation.AI.Decision
                     SimPlayer threat = FindClosestThreat(player.Position, 20.0f);
                     if (threat != null)
                     {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = threat;
                         action.TargetPosition = threat.Position;
                         return action;
@@ -159,7 +160,7 @@ namespace HandballManager.Simulation.AI.Decision
                     SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
                     if (threat != null)
                     {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = threat;
                         action.TargetPosition = threat.Position;
                         // Tackle only if opponent tries to break line
@@ -168,7 +169,7 @@ namespace HandballManager.Simulation.AI.Decision
                             float agg = player.BaseData?.Aggression ?? 50f;
                             if (agg > 65f)
                             {
-                                action.Action = PlayerAction.AttemptingTackle;
+                                action.Action = PlayerAction.Tackling;
                             }
                         }
                         return action;
@@ -185,10 +186,10 @@ namespace HandballManager.Simulation.AI.Decision
                 // If formation data available, prefer slot assignment
                 if (tactic?.DefensiveFormationData != null)
                 {
-                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.PositionRole == player.AssignedTacticalRole);
+                    var slot = tactic.DefensiveFormationData.Slots?.Find(s => s.AssociatedPosition == player.AssignedTacticalRole);
                     if (slot != null)
                     {
-                        var name = slot.PositionRole.ToString().ToLower();
+                        var name = slot.AssociatedPosition.ToString().ToLower();
                         isHigh = name.Contains("high") || name.Contains("point");
                         isMid = name.Contains("mid") || name.Contains("half");
                         isDeep = name.Contains("deep") || name.Contains("wing") || name.Contains("pivot");
@@ -199,7 +200,7 @@ namespace HandballManager.Simulation.AI.Decision
                     // High defender: aggressive, challenge ball carrier high, attempt interceptions
                     if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 10.0f)
                     {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -208,7 +209,7 @@ namespace HandballManager.Simulation.AI.Decision
                     SimPlayer threat = FindClosestThreat(player.Position, 20.0f);
                     if (threat != null)
                     {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = threat;
                         action.TargetPosition = threat.Position;
                         return action;
@@ -219,7 +220,7 @@ namespace HandballManager.Simulation.AI.Decision
                     // Mid defenders: cover half-spaces, challenge backcourt players
                     if (opponentHasBall && ballHolder != null && ballHolder.Position.y > 9.0f && Vector2.Distance(player.Position, ballHolder.Position) < 3.5f)
                     {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -228,7 +229,7 @@ namespace HandballManager.Simulation.AI.Decision
                     SimPlayer threat = FindClosestThreat(player.Position, 12.0f);
                     if (threat != null)
                     {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = threat;
                         action.TargetPosition = threat.Position;
                         return action;
@@ -240,7 +241,7 @@ namespace HandballManager.Simulation.AI.Decision
                     SimPlayer threat = FindClosestThreat(player.Position, 7.0f);
                     if (threat != null)
                     {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = threat;
                         action.TargetPosition = threat.Position;
                         // Tackle only if opponent tries to break line
@@ -249,7 +250,7 @@ namespace HandballManager.Simulation.AI.Decision
                             float agg = player.BaseData?.Aggression ?? 50f;
                             if (agg > 70f)
                             {
-                                action.Action = PlayerAction.AttemptingTackle;
+                                action.Action = PlayerAction.Tackling;
                             }
                         }
                         return action;
@@ -264,12 +265,12 @@ namespace HandballManager.Simulation.AI.Decision
                     // TODO: goalkeeper logic is still basic; will implement proper methods later
                     // Goalkeeper: prioritize blocking shots, positioning, and quick recovery
                     if (opponentHasBall && Vector2.Distance(player.Position, ballHolder.Position) < 2.5f) {
-                        action.Action = PlayerAction.AttemptingBlock;
+                        action.Action = PlayerAction.Blocking;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
                     } else {
-                        action.Action = PlayerAction.GoalkeeperPositioning;
+                        action.Action = PlayerAction.Idle;
                         action.TargetPlayer = null;
                         action.TargetPosition = player.Position; // Let GK logic handle optimal pos
                         return action;
@@ -277,7 +278,7 @@ namespace HandballManager.Simulation.AI.Decision
                 case PlayerPosition.Pivot:
                     // Pivot: focus on blocking passing lanes, physical marking in 6m zone
                     if (opponentHasBall && Vector2.Distance(player.Position, ballHolder.Position) < 3.0f * aggressionMod) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -293,7 +294,7 @@ namespace HandballManager.Simulation.AI.Decision
                         }
                     }
                     if (closeOpp != null) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = closeOpp;
                         action.TargetPosition = closeOpp.Position;
                         return action;
@@ -304,7 +305,7 @@ namespace HandballManager.Simulation.AI.Decision
                 case PlayerPosition.RightBack:
                     // Back: intercept passes, aggressive marking, help block shots
                     if (opponentHasBall && Vector2.Distance(player.Position, ballHolder.Position) < 2.5f * aggressionMod) {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -320,7 +321,7 @@ namespace HandballManager.Simulation.AI.Decision
                         }
                     }
                     if (backOpp != null) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = backOpp;
                         action.TargetPosition = backOpp.Position;
                         return action;
@@ -330,7 +331,7 @@ namespace HandballManager.Simulation.AI.Decision
                 case PlayerPosition.RightWing:
                     // Wing: intercept passes to corners, pressure on wings
                     if (opponentHasBall && Vector2.Distance(player.Position, ballHolder.Position) < 2.0f * aggressionMod) {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -346,7 +347,7 @@ namespace HandballManager.Simulation.AI.Decision
                         }
                     }
                     if (wingOpp != null) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = wingOpp;
                         action.TargetPosition = wingOpp.Position;
                         return action;
@@ -370,28 +371,28 @@ namespace HandballManager.Simulation.AI.Decision
                 float tackleRange = 2.0f + 0.01f * anticipation;
                 if (ballHolder.BaseData.GetShieldingEffectiveness() < 0.2f && distanceToHolder <= tackleRange) {
                     if ((aggression + bravery + determination) / 3f > 60f) {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
                     }
                 } else if (ballHolder.BaseData.GetShieldingEffectiveness() > 0.4f) {
                     if ((concentration + leadership) / 2f > 55f) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
                     }
                 } else if (distanceToHolder <= tackleRange) {
                     if (determination > 45f) {
-                        action.Action = PlayerAction.AttemptingTackle;
+                        action.Action = PlayerAction.Tackling;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
                     }
                 } else {
                     if ((workRate + leadership) / 2f > 50f) {
-                        action.Action = PlayerAction.MarkingPlayer;
+                        action.Action = PlayerAction.DefendingPlayer;
                         action.TargetPlayer = ballHolder;
                         action.TargetPosition = ballHolder.Position;
                         return action;
@@ -402,7 +403,7 @@ namespace HandballManager.Simulation.AI.Decision
                 float determination = player.BaseData?.Determination ?? 50f;
                 float anticipation = player.BaseData?.Anticipation ?? 50f;
                 if ((workRate + determination + anticipation) / 3f > 45f) {
-                    action.Action = PlayerAction.ChasingBall;
+                    action.Action = PlayerAction.Intercepting;
                     action.TargetPlayer = null;
                     action.TargetPosition = new Vector2(ball.Position.x, ball.Position.z);
                     return action;
@@ -421,7 +422,7 @@ namespace HandballManager.Simulation.AI.Decision
                     }
                 }
                 if (markTarget != null && (leadership + concentration) / 2f > 45f) {
-                    action.Action = PlayerAction.MarkingPlayer;
+                    action.Action = PlayerAction.DefendingPlayer;
                     action.TargetPlayer = markTarget;
                     action.TargetPosition = markTarget.Position;
                     return action;

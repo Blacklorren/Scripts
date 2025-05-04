@@ -1,4 +1,3 @@
-
 using UnityEngine;
 using HandballManager.Simulation.AI; // Updated from Engines to AI for PlayerAIController
 using HandballManager.Simulation.AI.Positioning; // For ITacticPositioner
@@ -117,7 +116,11 @@ namespace HandballManager.Simulation.Engines
 
             // --- Initialize AI Tactical Adaptation ---
             // For now, assume Away team is AI (teamSimId = 1)
-            _teamAIManager = new TeamAIManager(_state, 1, _eventHandler);
+            _teamAIManager = new TeamAIManager(_state, 1, _eventHandler, this); // Pass 'this' here
+
+            // Initialize player AI controllers (if not already done)
+            // InitializePlayerAIControllers(); // REMOVED - Method does not exist, likely handled by injected _aiController
+
             _lastTacticAIUpdateTime = -30f;
 
             // Basic validation of the passed-in state
@@ -210,9 +213,9 @@ namespace HandballManager.Simulation.Engines
                 
                 while (_state.CurrentPhase != GamePhase.Finished && !_cancellationSource.Token.IsCancellationRequested)
                 {
+                    // --- Handle Timeout phase as a special case (decrement timer, not match time) ---
                     if (_state.CurrentPhase == GamePhase.Timeout)
                     {
-                        // Only decrement TimeoutTimer, do not advance match time or update player actions
                         _state.TimeoutTimer -= TIME_STEP_SECONDS;
                         if (_state.TimeoutTimer <= 0f)
                         {
@@ -224,18 +227,55 @@ namespace HandballManager.Simulation.Engines
                         continue; // Skip normal gameplay updates
                     }
 
+                    // --- Check for half-time and full-time transitions BEFORE potentially pausing/advancing clock ---
+                    // Note: timeBeforeStep is not readily available here, using current time for checks.
+                    // This might slightly delay the transition if the exact threshold is crossed mid-step.
+                    if (_phaseManager.CheckAndHandleHalfTime(_state, _state.MatchTimeSeconds, _state.MatchTimeSeconds + TIME_STEP_SECONDS))
+                    {
+                        continue; // HalfTime transition occurred, skip rest of loop for this step
+                    }
+                    if (_phaseManager.CheckAndHandleFullTime(_state, _state.MatchTimeSeconds + TIME_STEP_SECONDS))
+                    {
+                        continue; // FullTime transition occurred, skip rest of loop for this step
+                    }
+
+                    // --- General clock pausing logic ---
+                    if (_state.IsClockPaused)
+                    {
+                        // Clock is paused: skip advancing match time and player/ball updates
+                        // Still handle phase transitions (e.g., to resume play after setup)
+                        _phaseManager.HandlePhaseTransitions(_state);
+                        continue;
+                    }
+
+                    // --- Main Simulation Step (Clock is NOT paused) ---
+
+                    // 1. Avancer le temps du match
+                    _state.MatchTimeSeconds += TIME_STEP_SECONDS;
+
                     // --- Passive Play Warning System ---
                     _passivePlayManager.Update(TIME_STEP_SECONDS);
 
-                    // --- Check for half-time transition and invalidate unused timeout ---
-                    if (!_state.IsSecondHalf && _state.HalfTimeReached)
+                    // --- Check for second half start and invalidate unused timeout ---
+                    // Moved this check after time advancement to ensure it happens *in* the second half
+                    if (!_state.IsSecondHalf && _state.HalfTimeReached && _state.MatchTimeSeconds >= SimConstants.HALF_DURATION_SECONDS)
                     {
                         _state.IsSecondHalf = true;
                         _state.InvalidateFirstTimeoutIfNotUsed();
-                        _eventHandler.LogEvent(_state, "Mi-temps atteinte : 1er timeout perdu si non utilisé");
+                        _eventHandler.LogEvent(_state, "Second Half Started. First half timeout lost if unused.");
                     }
 
-                    // (Normal simulation logic would go here)
+                    // 2. Mettre à jour les timers (suspensions, action prep, etc)
+                    _simulationTimer.UpdateTimers(_state, TIME_STEP_SECONDS, _eventHandler);
+
+                    // 3. Décisions IA joueurs
+                    _aiController.UpdatePlayerDecisions(_state, TIME_STEP_SECONDS);
+
+                    // 4. Mise à jour des mouvements (joueurs & balle)
+                    _movementSimulator.UpdateMovement(_state, TIME_STEP_SECONDS);
+
+                    // 5. Gérer les transitions de phase (mi-temps, fin de match, etc)
+                    _phaseManager.HandlePhaseTransitions(_state);
 
                     // --- AI Tactical Adaptation (every 30s simulated) ---
                     if (_state.MatchTimeSeconds - _lastTacticAIUpdateTime >= 30f)

@@ -16,6 +16,12 @@ namespace HandballManager.Simulation.AI.Decision // Updated to match new folder 
         /// <param name="tactic">The team's current tactic.</param>
         /// <returns>A score between 0 and 1 (higher is more desirable).</returns>
         float EvaluateDribbleScore(SimPlayer player, MatchState state, Tactic tactic);
+
+        /// <summary>
+        /// Returns a float score representing the desirability of dribbling in the current context.
+        /// </summary>
+        float DecideAction(SimPlayer dribbler, MatchState state);
+
     }
 }
 // --- END OF FILE HandballManager/Simulation/AI/DecisionMakers/IDribblingDecisionMaker.cs ---
